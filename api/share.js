@@ -1,37 +1,43 @@
 export default async function handler(req, res) {
   const { id } = req.query;
 
-  // 1. GASのWeb API URLを設定（config.jsにあるCONFIG.GAS_URLと同じURLを指定）
-  const GAS_URL = "https://script.google.com/macros/s/YOUR_GAS_SCRIPT_ID/exec"; 
+  // Vercelの環境変数からGASのURLを取得
+  const GAS_URL = process.env.GAS_URL;
+
+  if (!GAS_URL) {
+    return res.status(500).send("環境変数 GAS_URL が設定されていません");
+  }
 
   if (!id) {
-    return res.status(400).send("案件IDが指定されていません");
+    return res.status(400).send("案件ID（id）が指定されていません");
   }
 
   let title = "案件共有";
   let description = "案件詳細をご確認ください。";
 
   try {
-    // 2. サーバー側でGASから案件データを取得
-    const response = await fetch(`${GAS_URL}?id=${encodeURIComponent(id)}`);
+    // サーバー側からGASへデータ取得（リダイレクトを考慮して follow 設定）
+    const response = await fetch(`${GAS_URL}?id=${encodeURIComponent(id)}`, {
+      redirect: 'follow'
+    });
+    
     if (response.ok) {
       const data = await response.json();
       if (!data.error) {
         title = data.title || "無題の案件";
-        // LINEプレビュー（説明文）に表示したい項目を組み立て
         const address = data.address ? `住所: ${data.address}` : "";
         const client = data.client ? `発注元: ${data.client}` : "";
         description = [address, client].filter(Boolean).join(" / ") || "案件詳細をご確認ください。";
       }
     }
   } catch (e) {
-    console.error("Fetch error:", e);
+    console.error("GASデータ取得エラー:", e);
   }
 
-  // 3. 人間がアクセスした時の遷移先（トップのHTML画面）
+  // 人間がアクセスした時の転送先（トップの画面）
   const targetUrl = `https://${req.headers.host}/?id=${encodeURIComponent(id)}`;
 
-  // 4. LINEクローラー用のOGPタグを含むHTMLを出力（JavaScriptで自動転送も設定）
+  // LINEクローラー用のOGPタグを含むHTML
   const html = `<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -39,13 +45,13 @@ export default async function handler(req, res) {
   <title>${escapeHtml(title)}</title>
   <meta name="description" content="${escapeHtml(description)}">
   
-  <!-- LINE等のSNSプレビュー用OGPタグ -->
+  <!-- OGPタグ -->
   <meta property="og:title" content="${escapeHtml(title)}">
   <meta property="og:description" content="${escapeHtml(description)}">
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://${req.headers.host}/api/share?id=${encodeURIComponent(id)}">
   
-  <!-- ブラウザでアクセスした人間を瞬時に元の詳細画面へ自動リダイレクト -->
+  <!-- ブラウザでアクセスした人間を元の画面に移動させる -->
   <script>
     window.location.replace("${targetUrl}");
   </script>
