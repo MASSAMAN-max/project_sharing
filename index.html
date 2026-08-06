@@ -224,8 +224,9 @@
       });
       if (!workHtml) workHtml = "<div>予定なし</div>";
 
-      // 共有URL（このページ自身のURL。GASのURLではなくVercel側のURLを使う）
-      const shareUrl = `${window.location.origin}${window.location.pathname}?id=${encodeURIComponent(data.id)}`;
+      // 共有URL（VercelのOGP生成用APIRouteを経由するURLに変更）
+      const shareUrl = `${window.location.origin}/api/share?id=${encodeURIComponent(data.id)}`;
+      //const shareUrl = `${window.location.origin}${window.location.pathname}?id=${encodeURIComponent(data.id)}`;
 
       const shareMessage = `【案件共有】\n${title}\n${address}\n${shareUrl}`;
       const lineUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(shareMessage);
