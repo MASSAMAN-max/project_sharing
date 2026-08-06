@@ -1,7 +1,5 @@
 export default async function handler(req, res) {
   const { id } = req.query;
-
-  // Vercelの環境変数からGASのURLを取得
   const GAS_URL = process.env.GAS_URL;
 
   if (!GAS_URL) {
@@ -16,14 +14,27 @@ export default async function handler(req, res) {
   let description = "案件詳細をご確認ください。";
 
   try {
-    // サーバー側からGASへデータ取得（リダイレクトを考慮して follow 設定）
     const response = await fetch(`${GAS_URL}?id=${encodeURIComponent(id)}`, {
       redirect: 'follow'
     });
     
     if (response.ok) {
-      const data = await response.json();
-      if (!data.error) {
+      const text = await response.text();
+      let data = {};
+      
+      try {
+        // もしGASが JSONP 形式 callback({...}) で返してきた場合の整形処理
+        const jsonMatch = text.match(/^[^\(]*\(([\s\S]*)\);?$/);
+        if (jsonMatch && jsonMatch[1]) {
+          data = JSON.parse(jsonMatch[1]);
+        } else {
+          data = JSON.parse(text);
+        }
+      } catch (parseError) {
+        console.error("JSON解析エラー:", parseError);
+      }
+
+      if (data && !data.error) {
         title = data.title || "無題の案件";
         const address = data.address ? `住所: ${data.address}` : "";
         const client = data.client ? `発注元: ${data.client}` : "";
@@ -31,13 +42,11 @@ export default async function handler(req, res) {
       }
     }
   } catch (e) {
-    console.error("GASデータ取得エラー:", e);
+    console.error("GAS通信エラー:", e);
   }
 
-  // 人間がアクセスした時の転送先（トップの画面）
   const targetUrl = `https://${req.headers.host}/?id=${encodeURIComponent(id)}`;
 
-  // LINEクローラー用のOGPタグを含むHTML
   const html = `<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -45,13 +54,11 @@ export default async function handler(req, res) {
   <title>${escapeHtml(title)}</title>
   <meta name="description" content="${escapeHtml(description)}">
   
-  <!-- OGPタグ -->
   <meta property="og:title" content="${escapeHtml(title)}">
   <meta property="og:description" content="${escapeHtml(description)}">
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://${req.headers.host}/api/share?id=${encodeURIComponent(id)}">
   
-  <!-- ブラウザでアクセスした人間を元の画面に移動させる -->
   <script>
     window.location.replace("${targetUrl}");
   </script>
