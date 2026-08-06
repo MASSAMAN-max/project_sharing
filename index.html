@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- 環境依存パラメータ（config.js）はメイン処理より前に読み込む -->
 <script src="config.js"></script>
-  
+
 <title>案件共有</title>
 <style>
   body {
@@ -135,16 +135,6 @@
   <div id="app" style="display:none;"></div>
 
   <script>
-
-      // GAS_URLは config.js の CONFIG.GAS_URL を参照する（環境依存パラメータの一元管理）
-  if (typeof CONFIG === 'undefined' || !CONFIG.GAS_URL) {
-    document.getElementById('fatalErrorBanner').style.display = 'block';
-    document.getElementById('fatalErrorBanner').textContent =
-      'config.js が読み込まれていないか、CONFIG.GAS_URL が未設定です。config.example.js を config.js としてコピーし、値を設定してください。';
-  }
-    // ⚠️ ここにGAS側（case-share-api.gs）をデプロイした際のウェブアプリURL（.../exec）を設定してください
-    const GAS_API_URL = "https://script.google.com/macros/s/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/exec";
-
     function getQueryParam(name) {
       return new URLSearchParams(window.location.search).get(name);
     }
@@ -153,7 +143,17 @@
       return String(str == null ? "" : str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
+    function showState(message, isError) {
+      const box = document.getElementById("stateBox");
+      box.style.display = "block";
+      document.getElementById("app").style.display = "none";
+      box.innerHTML = isError
+        ? `<div style="color:#d33; font-weight:bold;">⚠️ ${escapeHtml(message)}</div>`
+        : `<div class="spinner"></div><div>${escapeHtml(message)}</div>`;
+    }
+
     // JSONP方式でGASのAPIを呼び出す（CORSの制約を受けない）
+    // GAS_URLは config.js の CONFIG.GAS_URL を参照する（環境依存パラメータの一元管理）
     function fetchCaseDataJsonp(id) {
       return new Promise((resolve, reject) => {
         const callbackName = "caseDataCallback_" + Date.now();
@@ -174,22 +174,13 @@
         };
 
         const script = document.createElement("script");
-        script.src = `${GAS_API_URL}?id=${encodeURIComponent(id)}&callback=${callbackName}`;
+        script.src = `${CONFIG.GAS_URL}?id=${encodeURIComponent(id)}&callback=${callbackName}`;
         script.onerror = () => {
           cleanup();
           reject(new Error("データの取得に失敗しました（通信エラー）"));
         };
         document.body.appendChild(script);
       });
-    }
-
-    function showState(message, isError) {
-      const box = document.getElementById("stateBox");
-      box.style.display = "block";
-      document.getElementById("app").style.display = "none";
-      box.innerHTML = isError
-        ? `<div style="color:#d33; font-weight:bold;">⚠️ ${escapeHtml(message)}</div>`
-        : `<div class="spinner"></div><div>${escapeHtml(message)}</div>`;
     }
 
     function copyText(text) {
@@ -291,15 +282,18 @@
     }
 
     (function init() {
+      // config.js が読み込まれていない／CONFIG.GAS_URLが未設定・未編集のままの場合はここで止める
+      if (typeof CONFIG === "undefined" || !CONFIG.GAS_URL || CONFIG.GAS_URL.indexOf("xxxxxxxx") !== -1) {
+        showState("config.js が読み込まれていないか、CONFIG.GAS_URL が未設定です。config.example.js を config.js としてコピーし、値を設定してください。", true);
+        return;
+      }
+
       const id = getQueryParam("id");
       if (!id) {
         showState("URLに案件ID（?id=...）が指定されていません", true);
         return;
       }
-      if (!GAS_API_URL || GAS_API_URL.indexOf("xxxxxxxx") !== -1) {
-        showState("GAS_API_URLが未設定です。index.html内のGAS_API_URLを、デプロイしたGASウェブアプリのURLに書き換えてください。", true);
-        return;
-      }
+
       showState("案件情報を読み込んでいます…", false);
       fetchCaseDataJsonp(id)
         .then(data => {
