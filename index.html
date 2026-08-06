@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 環境依存パラメータ（config.js）はメイン処理より前に読み込む -->
+<script src="config.js"></script>
+  
+<title>案件共有</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 15px;
+    font-size: 14px;
+    color: #333;
+    background: #f4f4f4;
+    margin: 0;
+  }
+
+  .card {
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 15px;
+    background: #fff;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+    max-width: 480px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  h2 {
+    font-size: 20px;
+    margin-top: 0;
+    color: #000;
+    border-bottom: 2px solid #06c755;
+    padding-bottom: 8px;
+    word-break: break-word;
+  }
+
+  .label {
+    font-weight: bold;
+    color: #666;
+    width: 85px;
+    display: inline-block;
+    vertical-align: top;
+  }
+
+  .btn {
+    display: block;
+    width: 100%;
+    max-width: 480px;
+    box-sizing: border-box;
+    text-align: center;
+    padding: 15px 0;
+    color: white;
+    text-decoration: none;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 16px;
+    margin: 10px auto 0 auto;
+    border: none;
+    cursor: pointer;
+  }
+
+  .line-btn { background: #06c755; }
+  .fb-btn { background: #0084ff; }
+  .copy-btn { background: #666; }
+
+  .map-link {
+    color: #1a73e8;
+    text-decoration: none;
+    font-weight: bold;
+  }
+
+  hr {
+    border: 0;
+    border-top: 1px solid #eee;
+    margin: 15px 0;
+  }
+
+  .section-title {
+    font-weight: bold;
+    margin-bottom: 8px;
+  }
+
+  .small {
+    font-size: 12px;
+    color: #666;
+    word-break: break-all;
+  }
+
+  .work-item {
+    background: #f4f4f4;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+  .work-item:last-child { margin-bottom: 0; }
+  .work-item .w-date { color: #555; }
+  .work-item .w-content { font-weight: bold; color: #222; margin-left: 6px; }
+  .work-item .w-worker {
+    display: inline-block;
+    margin-left: 6px;
+    color: #0284c7;
+    background: #e0f2fe;
+    padding: 1px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: bold;
+  }
+
+  #stateBox {
+    max-width: 480px;
+    margin: 40px auto;
+    text-align: center;
+    color: #666;
+  }
+  .spinner {
+    width: 32px; height: 32px; margin: 0 auto 12px auto;
+    border: 3px solid #ddd; border-top-color: #06c755; border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+  <div id="stateBox">
+    <div class="spinner"></div>
+    <div>案件情報を読み込んでいます…</div>
+  </div>
+
+  <div id="app" style="display:none;"></div>
+
+  <script>
+
+      // GAS_URLは config.js の CONFIG.GAS_URL を参照する（環境依存パラメータの一元管理）
+  if (typeof CONFIG === 'undefined' || !CONFIG.GAS_URL) {
+    document.getElementById('fatalErrorBanner').style.display = 'block';
+    document.getElementById('fatalErrorBanner').textContent =
+      'config.js が読み込まれていないか、CONFIG.GAS_URL が未設定です。config.example.js を config.js としてコピーし、値を設定してください。';
+  }
+    // ⚠️ ここにGAS側（case-share-api.gs）をデプロイした際のウェブアプリURL（.../exec）を設定してください
+    const GAS_API_URL = "https://script.google.com/macros/s/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/exec";
+
+    function getQueryParam(name) {
+      return new URLSearchParams(window.location.search).get(name);
+    }
+
+    function escapeHtml(str) {
+      return String(str == null ? "" : str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // JSONP方式でGASのAPIを呼び出す（CORSの制約を受けない）
+    function fetchCaseDataJsonp(id) {
+      return new Promise((resolve, reject) => {
+        const callbackName = "caseDataCallback_" + Date.now();
+        const timeoutId = setTimeout(() => {
+          cleanup();
+          reject(new Error("データの取得がタイムアウトしました"));
+        }, 15000);
+
+        function cleanup() {
+          clearTimeout(timeoutId);
+          delete window[callbackName];
+          if (script.parentNode) script.parentNode.removeChild(script);
+        }
+
+        window[callbackName] = (data) => {
+          cleanup();
+          resolve(data);
+        };
+
+        const script = document.createElement("script");
+        script.src = `${GAS_API_URL}?id=${encodeURIComponent(id)}&callback=${callbackName}`;
+        script.onerror = () => {
+          cleanup();
+          reject(new Error("データの取得に失敗しました（通信エラー）"));
+        };
+        document.body.appendChild(script);
+      });
+    }
+
+    function showState(message, isError) {
+      const box = document.getElementById("stateBox");
+      box.style.display = "block";
+      document.getElementById("app").style.display = "none";
+      box.innerHTML = isError
+        ? `<div style="color:#d33; font-weight:bold;">⚠️ ${escapeHtml(message)}</div>`
+        : `<div class="spinner"></div><div>${escapeHtml(message)}</div>`;
+    }
+
+    function copyText(text) {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "absolute";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, 99999);
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+
+    function renderCase(data) {
+      const title    = data.title || "無題の案件";
+      const address  = data.address || "--";
+      const client   = data.client || "--";
+      const staff    = data.staff || "--";
+      const tel      = data.tel || "--";
+      const check    = data.check || "--";
+      const kBox     = data.kBox || "--";
+      const area     = data.area || "--";
+      const loc      = data.loc || "";
+      const note     = data.note || "--";
+      const attached = data.attached || "";
+      const workSchedule = data.workSchedule || [];
+
+      const mapUrl = loc
+        ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(loc)}`
+        : "#";
+
+      let workHtml = "";
+      workSchedule.forEach(w => {
+        workHtml += `
+          <div class="work-item">
+            <span class="w-date">📅 ${escapeHtml(w.date)}</span>
+            <span class="w-content">${escapeHtml(w.content)}</span>
+            ${w.worker ? `<span class="w-worker">👤 ${escapeHtml(w.worker)}</span>` : ""}
+          </div>`;
+      });
+      if (!workHtml) workHtml = "<div>予定なし</div>";
+
+      // 共有URL（このページ自身のURL。GASのURLではなくVercel側のURLを使う）
+      const shareUrl = `${window.location.origin}${window.location.pathname}?id=${encodeURIComponent(data.id)}`;
+
+      const shareMessage = `【案件共有】\n${title}\n${address}\n${shareUrl}`;
+      const lineUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(shareMessage);
+
+      const html = `
+        <div class="card">
+          <h2>${escapeHtml(title)}</h2>
+
+          <p><span class="label">住　所</span>: ${escapeHtml(address)}</p>
+          <p><span class="label">発注元</span>: ${escapeHtml(client)}（${escapeHtml(staff)} 様）</p>
+          <p><span class="label">連絡先</span>: ${escapeHtml(tel)}</p>
+          <p><span class="label">検査日</span>: ${escapeHtml(check)}</p>
+          <p><span class="label">キーBOX</span>: ${escapeHtml(kBox)}</p>
+          <p><span class="label">面　積</span>: ${escapeHtml(area)} ㎡</p>
+          <p><span class="label">備　考</span>: ${escapeHtml(note)}</p>
+
+          ${attached ? `<p><span class="label">参考資料</span>: <a href="${escapeHtml(attached)}" class="map-link" target="_blank" rel="noopener">📂 資料参照</a></p>` : ""}
+
+          <hr>
+
+          <div class="section-title">施工予定</div>
+          ${workHtml}
+
+          <hr>
+
+          <p><a href="${mapUrl}" class="map-link" target="_blank" rel="noopener">📍 Googleマップを開く</a></p>
+
+          <hr>
+
+          <div class="section-title">共有URL</div>
+          <div class="small">${escapeHtml(shareUrl)}</div>
+        </div>
+
+        <a href="${lineUrl}" class="btn line-btn" target="_blank" rel="noopener">📩 LINEで案件URLを送る</a>
+        <button id="msgBtn" class="btn fb-btn">💬 Messengerで案件URLを送る</button>
+        <button id="copyBtn" class="btn copy-btn">🔗 案件URLをコピー</button>
+      `;
+
+      const app = document.getElementById("app");
+      app.innerHTML = html;
+      app.style.display = "block";
+      document.getElementById("stateBox").style.display = "none";
+      document.title = title;
+
+      document.getElementById("msgBtn").addEventListener("click", () => {
+        copyText(shareMessage);
+        alert("案件URLをコピーしました。Messengerに貼り付けてください。");
+        window.open("https://m.me/", "_blank");
+      });
+      document.getElementById("copyBtn").addEventListener("click", () => {
+        copyText(shareUrl);
+        alert("案件URLをコピーしました。");
+      });
+    }
+
+    (function init() {
+      const id = getQueryParam("id");
+      if (!id) {
+        showState("URLに案件ID（?id=...）が指定されていません", true);
+        return;
+      }
+      if (!GAS_API_URL || GAS_API_URL.indexOf("xxxxxxxx") !== -1) {
+        showState("GAS_API_URLが未設定です。index.html内のGAS_API_URLを、デプロイしたGASウェブアプリのURLに書き換えてください。", true);
+        return;
+      }
+      showState("案件情報を読み込んでいます…", false);
+      fetchCaseDataJsonp(id)
+        .then(data => {
+          if (data.error) {
+            showState(data.error, true);
+            return;
+          }
+          renderCase(data);
+        })
+        .catch(err => {
+          showState(err.message || "データの取得に失敗しました", true);
+        });
+    })();
+  </script>
+
+</body>
+</html>
