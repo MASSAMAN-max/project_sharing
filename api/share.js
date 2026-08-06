@@ -20,9 +20,9 @@ export default async function handler(req, res) {
   let imageUrl = `https://${req.headers.host}/favicon.ico`;
 
   try {
-    // GASのコールドスタート（初回起動の遅さ）を考慮してタイムアウトを3.5秒に少し延長
+    // GASのコールドスタート（初回起動の遅さ）を考慮してタイムアウトを4秒に少し延長
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3500);
+    const timeout = setTimeout(() => controller.abort(), 4000);
 
     const fetchUrl = `${GAS_URL}?id=${encodeURIComponent(id)}`;
     console.log(`[OGP Debug] GASへ通信開始: ${fetchUrl}`);
