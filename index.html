@@ -216,7 +216,7 @@
       // 共有URL（このページ自身のURL。GASのURLではなくVercel側のURLを使う）
       const shareUrl = `${window.location.origin}${window.location.pathname}?id=${encodeURIComponent(data.id)}`;
 
-      const shareMessage = `【案件共有】\n${title}\n${address}\n${shareUrl}`;
+      const shareMessage = `【案件共有】\n${title}\n${client}\n${shareUrl}`;
       const lineUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(shareMessage);
 
       const html = `
@@ -226,13 +226,13 @@
           <p><span class="label">住　所</span>: ${escapeHtml(address)}</p>
           <p><span class="label">発注元</span>: ${escapeHtml(client)}（${escapeHtml(staff)} 様）</p>
           <p><span class="label">連絡先</span>: ${escapeHtml(tel)}</p>
+          <p><span class="label">検査日</span>: ${escapeHtml(check)}</p>
           <p><span class="label">キーBOX</span>: ${escapeHtml(kBox)}</p>
           <p><span class="label">面　積</span>: ${escapeHtml(area)} ㎡</p>
           <p><span class="label">備　考</span>: ${escapeHtml(note)}</p>
-          ${attached ? `<p><span class="label">参考資料</span>: 
-            <a href="${escapeHtml(attached)}" class="map-link" target="_blank" rel="noopener">📂 資料参照はこちらをクリック</a></p>` : ""}
-          <p><span class="label">検査日</span>: ${escapeHtml(check)}</p>
-          
+
+          ${attached ? `<p><span class="label">参考資料</span>: <a href="${escapeHtml(attached)}" class="map-link" target="_blank" rel="noopener">📂 資料参照</a></p>` : ""}
+
           <hr>
 
           <div class="section-title">施工予定</div>
