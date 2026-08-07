@@ -152,35 +152,24 @@
         : `<div class="spinner"></div><div>${escapeHtml(message)}</div>`;
     }
 
-    // JSONP方式でGASのAPIを呼び出す（CORSの制約を受けない）
-    // GAS_URLは config.js の CONFIG.GAS_URL を参照する（環境依存パラメータの一元管理）
-    function fetchCaseDataJsonp(id) {
-      return new Promise((resolve, reject) => {
-        const callbackName = "caseDataCallback_" + Date.now();
-        const timeoutId = setTimeout(() => {
-          cleanup();
-          reject(new Error("データの取得がタイムアウトしました"));
-        }, 15000);
-
-        function cleanup() {
-          clearTimeout(timeoutId);
-          delete window[callbackName];
-          if (script.parentNode) script.parentNode.removeChild(script);
-        }
-
-        window[callbackName] = (data) => {
-          cleanup();
-          resolve(data);
-        };
-
-        const script = document.createElement("script");
-        script.src = `${CONFIG.GAS_URL}?id=${encodeURIComponent(id)}&callback=${callbackName}`;
-        script.onerror = () => {
-          cleanup();
-          reject(new Error("データの取得に失敗しました（通信エラー）"));
-        };
-        document.body.appendChild(script);
-      });
+    // メインの案件管理アプリ（Vercel → GAS を fetch()）と全く同じ「素のfetch()」方式。
+    // GAS側が「アクセスできるユーザー：全員」で正しくデプロイされていれば、
+    // 別ドメイン(Vercel)・スマホ・複数Googleアカウントログイン環境でも問題なく動作するはず
+    // （メインアプリが同じ構成で実際に問題なく動いている実績があるため）。
+    async function fetchCaseData(id) {
+      const url = `${CONFIG.GAS_URL}?id=${encodeURIComponent(id)}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      try {
+        const response = await fetch(url, { method: "GET", signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (!response.ok) throw new Error(`HTTPエラー: ${response.status}`);
+        return await response.json();
+      } catch (err) {
+        clearTimeout(timeoutId);
+        if (err.name === "AbortError") throw new Error("データの取得がタイムアウトしました");
+        throw new Error("データの取得に失敗しました（通信エラー）: " + err.message);
+      }
     }
 
     function copyText(text) {
@@ -224,9 +213,8 @@
       });
       if (!workHtml) workHtml = "<div>予定なし</div>";
 
-      // 共有URL（VercelのOGP生成用APIRouteを経由するURLに変更）
-      const shareUrl = `${window.location.origin}/api/share?id=${encodeURIComponent(data.id)}`;
-      //const shareUrl = `${window.location.origin}${window.location.pathname}?id=${encodeURIComponent(data.id)}`;
+      // 共有URL（このページ自身のURL。GASのURLではなくVercel側のURLを使う）
+      const shareUrl = `${window.location.origin}${window.location.pathname}?id=${encodeURIComponent(data.id)}`;
 
       const shareMessage = `【案件共有】\n${title}\n${address}\n${shareUrl}`;
       const lineUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(shareMessage);
@@ -241,10 +229,10 @@
           <p><span class="label">キーBOX</span>: ${escapeHtml(kBox)}</p>
           <p><span class="label">面　積</span>: ${escapeHtml(area)} ㎡</p>
           <p><span class="label">備　考</span>: ${escapeHtml(note)}</p>
+          ${attached ? `<p><span class="label">参考資料</span>: 
+            <a href="${escapeHtml(attached)}" class="map-link" target="_blank" rel="noopener">📂 資料参照はこちらをクリック</a></p>` : ""}
           <p><span class="label">検査日</span>: ${escapeHtml(check)}</p>
-
-          ${attached ? `<p><span class="label">参考資料</span>: <a href="${escapeHtml(attached)}" class="map-link" target="_blank" rel="noopener">📂 資料参照はこちらをクリック</a></p>` : ""}
-
+          
           <hr>
 
           <div class="section-title">施工予定</div>
@@ -296,7 +284,7 @@
       }
 
       showState("案件情報を読み込んでいます…", false);
-      fetchCaseDataJsonp(id)
+      fetchCaseData(id)
         .then(data => {
           if (data.error) {
             showState(data.error, true);
