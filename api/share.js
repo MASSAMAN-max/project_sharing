@@ -20,7 +20,7 @@ export default async function handler(req, res) {
   let imageUrl = `https://${req.headers.host}/favicon.ico`;
 
   try {
-    // GASのコールドスタート（初回起動の遅さ）を考慮してタイムアウトを4秒に少し延長
+    // GASのコールドスタートを考慮してタイムアウトを4秒に設定
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 4000);
 
@@ -47,12 +47,11 @@ export default async function handler(req, res) {
       }
 
       if (data && !data.error) {
-        // GASから返ってくるプロパティ名と合わせる
+        // タイトルの設定
         title = data.title || "案件共有";
         
-        const address = data.address ? `住所: ${data.address}` : "";
-        const client = data.client ? `発注元: ${data.client}` : "";
-        description = [address, client].filter(Boolean).join(" / ") || "案件詳細をご確認ください。";
+        // 説明文（発注元のみを表示）
+        description = data.client ? `発注元: ${data.client}` : "案件詳細をご確認ください。";
         
         if (data.imageUrl) imageUrl = data.imageUrl;
       } else if (data && data.error) {
