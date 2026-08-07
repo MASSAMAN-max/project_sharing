@@ -219,7 +219,8 @@
       const shareUrl = `${window.location.origin}/api/share?id=${encodeURIComponent(data.id)}`;
       
       // LINE送信用のメッセージ（件名 ＋ 発注元 ＋ api/shareのURL）
-      const shareMessage = `【案件共有】\n${title}\n発注元: ${clientStr}\n${shareUrl}`;
+      //const shareMessage = `【案件共有】\n${title}\n発注元: ${clientStr}\n${shareUrl}`;
+      const shareMessage = `${shareUrl}`;
       const lineUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(shareMessage);
 
       const html = `
