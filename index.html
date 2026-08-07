@@ -213,6 +213,8 @@
       });
       if (!workHtml) workHtml = "<div>予定なし</div>";
 
+      const clientStr = (staff && staff !== "--" && staff !== "") ? `${client}（${staff} 様）` : client;
+      
       // 【重要】共有URLを /api/share に指定する
       const shareUrl = `${window.location.origin}/api/share?id=${encodeURIComponent(data.id)}`;
       
