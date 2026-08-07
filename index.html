@@ -213,10 +213,11 @@
       });
       if (!workHtml) workHtml = "<div>予定なし</div>";
 
-      // 共有URL（このページ自身のURL。GASのURLではなくVercel側のURLを使う）
-      const shareUrl = `${window.location.origin}${window.location.pathname}?id=${encodeURIComponent(data.id)}`;
-
-      const shareMessage = `【案件共有】\n${title}\n${client}\n${shareUrl}`;
+      // 【重要】共有URLを /api/share に指定する
+      const shareUrl = `${window.location.origin}/api/share?id=${encodeURIComponent(data.id)}`;
+      
+      // LINE送信用のメッセージ（件名 ＋ 発注元 ＋ api/shareのURL）
+      const shareMessage = `【案件共有】\n${title}\n発注元: ${clientStr}\n${shareUrl}`;
       const lineUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(shareMessage);
 
       const html = `
