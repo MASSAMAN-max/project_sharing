@@ -1,5 +1,3 @@
-// api/share.js
-
 function escapeHtml(str) {
   return String(str == null ? "" : str).replace(/[&<>"']/g, c => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -18,26 +16,26 @@ export default async function handler(req, res) {
   let clientStr = "";
 
   try {
-    // 1. GASから件名と発注元を取得
     const gasRes = await fetch(`${GAS_URL}?id=${encodeURIComponent(id)}`);
     if (gasRes.ok) {
       const data = await gasRes.json();
       if (data && !data.error) {
         title = data.title || "案件共有";
+        
+        // --- clientStr の定義 ---
         const client = data.client || "";
         const staff = data.staff || "";
-        clientStr = (staff && staff !== "--") ? `${client}（${staff} 様）` : client;
+        clientStr = (staff && staff !== "--" && staff !== "") ? `${client}（${staff} 様）` : client;
       }
     }
   } catch (e) {
     console.error("GAS Fetch Error:", e);
   }
 
-  // 人間が開いた時の転送先（元のindex.html）
+  // 画面を開いた時の転送先（元のindex.html）
   const targetUrl = `https://${req.headers.host}/?id=${encodeURIComponent(id)}`;
 
-  // 2. LINEロボット用OGP ＋ 人間用JSリダイレクト
-  // ※ http-equiv="refresh" を外すことで、LINEロボットがindex.htmlへ追従するのを防ぎます
+  // OGPメタタグの設定（LINEロボットが参照）
   const html = `<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -49,7 +47,7 @@ export default async function handler(req, res) {
 </head>
 <body>
   <script>
-    // 人間がブラウザで開いた時だけ速やかに画面(index.html)へジャンプ
+    // ブラウザで開いた時だけ index.html へジャンプ
     window.location.href = "${targetUrl}";
   </script>
 </body>
