@@ -7,25 +7,32 @@ export default async function handler(req, res) {
   }
 
   if (!GAS_URL) {
-    return res.status(500).json({ error: "サーバーの設定エラー（GAS_URL未設定）" });
+    return res.status(500).json({ 
+      error: "サーバー設定エラー: Vercel環境変数『GAS_URL』が読み込めていません。Redeployを実行してください。" 
+    });
   }
 
   try {
-    const gasRes = await fetch(`${GAS_URL}?token=${encodeURIComponent(token)}`);
-    
-    if (!gasRes.ok) {
-      return res.status(gasRes.status).json({ 
-        error: `GASからのデータ取得に失敗しました (HTTP ${gasRes.status})` 
+    const gasRes = await fetch(`${GAS_URL}?token=${encodeURIComponent(token)}`, {
+      redirect: "follow"
+    });
+
+    const responseText = await gasRes.text();
+
+    // JSONとしてパースできるか判定
+    try {
+      const data = JSON.parse(responseText);
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      return res.status(200).json(data);
+    } catch (parseError) {
+      // GASからHTML（ログイン画面やエラー）が返ってきた場合
+      return res.status(500).json({ 
+        error: "GASからの応答がJSONではありません。GASのアクセス権限が『全員』になっているか確認してください。",
+        rawResponse: responseText.substring(0, 150) // レスポンスの先頭を表示
       });
     }
 
-    const data = await gasRes.json();
-    
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    return res.status(200).json(data);
-
   } catch (error) {
-    console.error("Data Fetch Error:", error);
-    return res.status(500).json({ error: "通信エラーが発生しました" });
+    return res.status(500).json({ error: "GAS通信エラー: " + error.message });
   }
 }
