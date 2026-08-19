@@ -16,8 +16,7 @@ const BOT_USER_AGENTS = [
 
 export default async function handler(req, res) {
   const host = req.headers.host || 'localhost';
-  const currentUrl = new URL(req.url, 'https://' + host);
-  const token = currentUrl.searchParams.get('token');
+  const token = req.query ? req.query.token : '';
 
   if (!token) {
     return res.status(400).send("パラメーターエラー");
@@ -27,14 +26,14 @@ export default async function handler(req, res) {
   const isBot = BOT_USER_AGENTS.some(bot => userAgent.includes(bot));
   const targetUrl = `https://${host}/index.html?token=${encodeURIComponent(token)}`;
 
-  // 【1】一般ユーザー（ブラウザ）の場合：GASを待たずに0.01秒で即時転送
+  // 【1】一般ユーザー（ブラウザ）：GASを待たずに即時転送
   if (!isBot) {
     const html = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>案件共有</title></head><body><script>window.location.href="${targetUrl}";</script></body></html>`;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.status(200).send(html);
   }
 
-  // 【2】SNSボット（LINE等）の場合：GASからOGPを取得
+  // 【2】SNSボット（LINE等）：GASからOGPを取得
   const GAS_URL = process.env.GAS_URL;
   if (!GAS_URL) {
     return res.status(400).send("パラメーターエラー");
