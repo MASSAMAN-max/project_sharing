@@ -5,24 +5,23 @@ function escapeHtml(str) {
 }
 
 export default async function handler(req, res) {
-  const { id } = req.query;
+  // 【重要】URLはNo（連番）ではなく、ハッシュ化された共有トークン（token）を使う。
+  //   Noを直接使うと、他の番号を手打ちされて他案件を推測・閲覧されるリスクがあるため。
+  const { token } = req.query;
   const GAS_URL = process.env.GAS_URL;
 
-  if (!GAS_URL || !id) {
+  if (!GAS_URL || !token) {
     return res.status(400).send("パラメーターエラー");
   }
 
   let title = "案件共有";
   let clientStr = "";
-
   try {
-    const gasRes = await fetch(`${GAS_URL}?id=${encodeURIComponent(id)}`);
+    const gasRes = await fetch(`${GAS_URL}?token=${encodeURIComponent(token)}`);
     if (gasRes.ok) {
       const data = await gasRes.json();
       if (data && !data.error) {
         title = data.title || "案件共有";
-        
-        // --- clientStr の定義 ---
         const client = data.client || "";
         const staff = data.staff || "";
         clientStr = (staff && staff !== "--" && staff !== "") ? `${client}（${staff} 様）` : client;
@@ -32,8 +31,13 @@ export default async function handler(req, res) {
     console.error("GAS Fetch Error:", e);
   }
 
-  // 画面を開いた時の転送先（元のindex.html）
-  const targetUrl = `https://${req.headers.host}/?id=${encodeURIComponent(id)}`;
+  // 画面を開いた時の転送先（実際に表示する index.html）。
+  // 【重要】"/index.html" という具体的なパスを指定すること。
+  //   vercel.json の rewrite はルートパス "/" だけを /api/share に転送する設定のため、
+  //   ここで "/?token=..." のようにルートへ戻してしまうと、また /api/share に
+  //   転送され、このスクリプトが再実行される……という無限リダイレクトループになる。
+  //   "/index.html" は rewrite の対象外なので、静的ファイルがそのまま返り、ループしない。
+  const targetUrl = `https://${req.headers.host}/index.html?token=${encodeURIComponent(token)}`;
 
   // OGPメタタグの設定（LINEロボットが参照）
   const html = `<!DOCTYPE html>
