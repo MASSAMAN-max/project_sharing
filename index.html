@@ -129,7 +129,7 @@
 
   <div id="stateBox">
     <div class="spinner"></div>
-    <div>案件情報を読み込んでいます…</div>
+    <div>案件共有ページ</div>
   </div>
 
   <div id="app" style="display:none;"></div>
@@ -153,11 +153,11 @@
     }
 
     // メインの案件管理アプリ（Vercel → GAS を fetch()）と全く同じ「素のfetch()」方式。
-    // GAS側が「アクセスできるユーザー：全員」で正しくデプロイされていれば、
-    // 別ドメイン(Vercel)・スマホ・複数Googleアカウントログイン環境でも問題なく動作するはず
-    // （メインアプリが同じ構成で実際に問題なく動いている実績があるため）。
-    async function fetchCaseData(id) {
-      const url = `${CONFIG.GAS_URL}?id=${encodeURIComponent(id)}`;
+    // GAS_URLは config.js の CONFIG.GAS_URL を参照する（環境依存パラメータの一元管理）
+    // ※ URLには案件No（連番）ではなく、ハッシュ化された共有トークンを使う
+    //   （他案件のNoを推測してアクセスされるのを防ぐため）
+    async function fetchCaseData(token) {
+      const url = `${CONFIG.GAS_URL}?token=${encodeURIComponent(token)}`;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
       try {
@@ -213,13 +213,11 @@
       });
       if (!workHtml) workHtml = "<div>予定なし</div>";
 
-      const clientStr = (staff && staff !== "--" && staff !== "") ? `${client}（${staff} 様）` : client;
-      
-      // 【重要】共有URLを /api/share に指定する
-      const shareUrl = `${window.location.origin}/api/share?id=${encodeURIComponent(data.id)}`;
-      
-      // LINE送信用のメッセージ（件名 ＋ 発注元 ＋ api/shareのURL）
-      //const shareMessage = `【案件共有】\n${title}\n発注元: ${clientStr}\n${shareUrl}`;
+      // 【重要】LINE等に送る共有URLは /api/share（OGPタグ付きの中継ページ）を指す。
+      // /api/share が vercel.json のrewriteで "/" にも紐づいているため、
+      // 人間がこのURLを直接開いた場合も自動的にこのページ（token付き）へ遷移する。
+      const shareUrl = `${window.location.origin}/api/share?token=${encodeURIComponent(data.token)}`;
+
       const shareMessage = `${shareUrl}`;
       const lineUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(shareMessage);
 
@@ -281,14 +279,15 @@
         return;
       }
 
-      const id = getQueryParam("id");
-      if (!id) {
-        showState("URLに案件ID（?id=...）が指定されていません", true);
+      // URLは No ではなく共有トークン（?token=...）を使う
+      const token = getQueryParam("token");
+      if (!token) {
+        showState("URLに共有トークン（?token=...）が指定されていません", true);
         return;
       }
 
       showState("案件情報を読み込んでいます…", false);
-      fetchCaseData(id)
+      fetchCaseData(token)
         .then(data => {
           if (data.error) {
             showState(data.error, true);
