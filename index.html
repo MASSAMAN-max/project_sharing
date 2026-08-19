@@ -152,23 +152,48 @@
         : `<div class="spinner"></div><div>${escapeHtml(message)}</div>`;
     }
 
-    // メインの案件管理アプリ（Vercel → GAS を fetch()）と全く同じ「素のfetch()」方式。
-    // GAS_URLは config.js の CONFIG.GAS_URL を参照する（環境依存パラメータの一元管理）
-    // ※ URLには案件No（連番）ではなく、ハッシュ化された共有トークンを使う
-    //   （他案件のNoを推測してアクセスされるのを防ぐため）
+    // 【CORS対策】
+    // ブラウザからGASを直接fetchせず、同一オリジンのVercel API
+    // (/api/data) を経由してサーバー側からGASへ接続する。
     async function fetchCaseData(token) {
-      const url = `${CONFIG.GAS_URL}?token=${encodeURIComponent(token)}`;
+      const url = `/api/data?token=${encodeURIComponent(token)}`;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
+
       try {
-        const response = await fetch(url, { method: "GET", signal: controller.signal });
+        const response = await fetch(url, {
+          method: "GET",
+          signal: controller.signal,
+          headers: { "Accept": "application/json" }
+        });
+
         clearTimeout(timeoutId);
-        if (!response.ok) throw new Error(`HTTPエラー: ${response.status}`);
+
+        if (!response.ok) {
+          let detail = "";
+          try {
+            detail = await response.text();
+          } catch (_) {}
+
+          throw new Error(
+            detail
+              ? `HTTPエラー ${response.status}: ${detail}`
+              : `HTTPエラー: ${response.status}`
+          );
+        }
+
         return await response.json();
+
       } catch (err) {
         clearTimeout(timeoutId);
-        if (err.name === "AbortError") throw new Error("データの取得がタイムアウトしました");
-        throw new Error("データの取得に失敗しました（通信エラー）: " + err.message);
+
+        if (err.name === "AbortError") {
+          throw new Error("データの取得がタイムアウトしました");
+        }
+
+        throw new Error(
+          "データの取得に失敗しました（通信エラー）: " + err.message
+        );
       }
     }
 
@@ -273,11 +298,9 @@
     }
 
     (function init() {
-      // config.js が読み込まれていない／CONFIG.GAS_URLが未設定・未編集のままの場合はここで止める
-      if (typeof CONFIG === "undefined" || !CONFIG.GAS_URL || CONFIG.GAS_URL.indexOf("xxxxxxxx") !== -1) {
-        showState("config.js が読み込まれていないか、CONFIG.GAS_URL が未設定です。config.example.js を config.js としてコピーし、値を設定してください。", true);
-        return;
-      }
+      // GAS_URLはブラウザ側では使用しない。
+      // GAS接続はVercelの /api/data が担当する。
+      // config.jsは既存構成との互換性のため読み込み可能なままにしている。
 
       // URLは No ではなく共有トークン（?token=...）を使う
       const token = getQueryParam("token");
