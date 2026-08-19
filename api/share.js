@@ -15,7 +15,10 @@ const BOT_USER_AGENTS = [
 ];
 
 module.exports = async function handler(req, res) {
-  const token = req.query ? req.query.token : null;
+  // WHATWG URL API を使用してパラメータを取得（url.parse の回避）
+  const host = req.headers.host || 'localhost';
+  const currentUrl = new URL(req.url, 'https://' + host);
+  const token = currentUrl.searchParams.get('token');
 
   if (!token) {
     return res.status(400).send("パラメーターエラー");
@@ -25,7 +28,7 @@ module.exports = async function handler(req, res) {
   const isBot = BOT_USER_AGENTS.some(function (bot) {
     return userAgent.includes(bot);
   });
-  const targetUrl = "https://" + req.headers.host + "/index.html?token=" + encodeURIComponent(token);
+  const targetUrl = 'https://' + host + '/index.html?token=' + encodeURIComponent(token);
 
   // 【1】一般ユーザー（ブラウザ）の場合：即時転送
   if (!isBot) {
@@ -44,7 +47,11 @@ module.exports = async function handler(req, res) {
   let clientStr = "";
 
   try {
-    const gasRes = await fetch(GAS_URL + "?token=" + encodeURIComponent(token));
+    // GASへのリクエストURLも new URL() で安全に生成
+    const gasApiUrl = new URL(GAS_URL);
+    gasApiUrl.searchParams.set('token', token);
+
+    const gasRes = await fetch(gasApiUrl.toString());
     if (gasRes.ok) {
       const data = await gasRes.json();
       if (data && !data.error) {
