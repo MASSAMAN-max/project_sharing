@@ -4,13 +4,52 @@ function escapeHtml(str) {
   }[c]));
 }
 
-export default async function handler(req, res) {
-  // 【重要】URLはNo（連番）ではなく、ハッシュ化された共有トークン（token）を使う。
-  //   Noを直接使うと、他の番号を手打ちされて他案件を推測・閲覧されるリスクがあるため。
-  const { token } = req.query;
-  const GAS_URL = process.env.GAS_URL;
+// OGP（プレビューカード）を取得しに来るSNSボットのリスト
+const BOT_USER_AGENTS = [
+  'facebookexternalhit',
+  'line-poker', // LINEのOGP収集ボット
+  'twitterbot',
+  'slackbot',
+  'discordbot',
+  'telegrambot',
+  'whatsapp'
+];
 
-  if (!GAS_URL || !token) {
+export default async function handler(req, res) {
+  const { token } = req.query;
+
+  if (!token) {
+    return res.status(400).send("パラメーターエラー");
+  }
+
+  const userAgent = (req.headers['user-agent'] || '').toLowerCase();
+  const isBot = BOT_USER_AGENTS.some(bot => userAgent.includes(bot));
+  const targetUrl = `https://${req.headers.host}/index.html?token=${encodeURIComponent(token)}`;
+
+  // 【1】人間（ブラウザ）が開いた場合
+  //  GASへの通信（await fetch）をスキップし、0.01秒で index.html へ転送する
+  if (!isBot) {
+    const html = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>案件共有</title>
+</head>
+<body>
+  <script>
+    window.location.href = "${targetUrl}";
+  </script>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.status(200).send(html);
+  }
+
+  // 【2】LINE等のボットが開いた場合のみ
+  //  裏でGASから件名を取得し、LINE上で綺麗に見えるOGPタグを動的生成する
+  const GAS_URL = process.env.GAS_URL;
+  if (!GAS_URL) {
     return res.status(400).send("パラメーターエラー");
   }
 
@@ -31,15 +70,6 @@ export default async function handler(req, res) {
     console.error("GAS Fetch Error:", e);
   }
 
-  // 画面を開いた時の転送先（実際に表示する index.html）。
-  // 【重要】"/index.html" という具体的なパスを指定すること。
-  //   vercel.json の rewrite はルートパス "/" だけを /api/share に転送する設定のため、
-  //   ここで "/?token=..." のようにルートへ戻してしまうと、また /api/share に
-  //   転送され、このスクリプトが再実行される……という無限リダイレクトループになる。
-  //   "/index.html" は rewrite の対象外なので、静的ファイルがそのまま返り、ループしない。
-  const targetUrl = `https://${req.headers.host}/index.html?token=${encodeURIComponent(token)}`;
-
-  // OGPメタタグの設定（LINEロボットが参照）
   const html = `<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -50,10 +80,6 @@ export default async function handler(req, res) {
   <title>${escapeHtml(title)}</title>
 </head>
 <body>
-  <script>
-    // ブラウザで開いた時だけ index.html へジャンプ
-    window.location.href = "${targetUrl}";
-  </script>
 </body>
 </html>`;
 
