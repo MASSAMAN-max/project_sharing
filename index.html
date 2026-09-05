@@ -9,6 +9,11 @@
 <!-- Googleアカウントでのログイン確認（Sign In With Google）に使用 -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 
+<!-- LINEアプリ内蔵ブラウザでの認証（LIFF）に使用。
+     Googleログインは、LINEアプリ内蔵ブラウザではブロックされてしまう
+     既知の制限があるため、LINE内蔵ブラウザで開かれた場合はこちらを使う。 -->
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
 <title>案件共有</title>
 <style>
   body {
@@ -271,8 +276,15 @@
     // 【ログイン状態管理】
     // currentUserEmail：Googleログインで確認できたメールアドレス。
     //   これが確定するまでは案件データの取得（fetchCaseData）を行わない。
+    // currentUserLineUserId：LIFF経由で確認できたLINEuserId。
+    //   LINEアプリ内蔵ブラウザで開いた場合はこちらが使われ、
+    //   currentUserEmailはnullのままになる。
+    //   ※ LINE経由でログインした場合、「LINEで送る」機能（宛先選択して
+    //   送信する機能）はメールアドレスが無いため使用できない。
+    //   案件詳細の閲覧のみ可能とする。
     // -------------------------------------------------------------
     let currentUserEmail = null;
+    let currentUserLineUserId = null;
 
     function showLoginScreen() {
       document.getElementById("stateBox").style.display = "none";
@@ -284,9 +296,10 @@
     // ブラウザからGASを直接fetchせず、同一オリジンのVercel API
     // (/api/data) を経由してサーバー側からGASへ接続する。
     // 【ログイン機能追加に伴いGET→POSTへ変更】
-    // 認証に使うメールアドレスをURL（クエリパラメータ）に乗せたくないため、
-    // token・emailの両方をリクエストボディに入れて送る。
-    async function fetchCaseData(token, email) {
+    // 認証に使う情報（email または lineUserId）をURL（クエリパラメータ）に
+    // 乗せたくないため、リクエストボディに入れて送る。
+    // authInfo は { email: "..." } または { lineUserId: "..." } のどちらか一方。
+    async function fetchCaseData(token, authInfo) {
       const url = `/api/data`;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -299,7 +312,7 @@
             "Accept": "application/json",
             "Content-Type": "application/json"
           },
-          body: JSON.stringify({ token: token, email: email })
+          body: JSON.stringify({ token: token, ...authInfo })
         });
 
         clearTimeout(timeoutId);
@@ -581,6 +594,13 @@
         staff: staff
       };
 
+      // LINE経由でログインした場合はメールアドレスを持たないため、
+      // 「LINEで送る」機能（宛先選択して送信する機能）は使えない。
+      // ボタン自体を出さないことで、押しても失敗する状態を防ぐ。
+      const linePushButtonHtml = currentUserEmail
+        ? `<button id="linePushBtn" class="btn line-btn">📩 LINEで送る</button>`
+        : "";
+
       const html = `
         <div class="card">
           <h2>${escapeHtml(title)}</h2>
@@ -610,7 +630,7 @@
           <div class="small">${escapeHtml(shareUrl)}</div>
         </div>
 
-        <button id="linePushBtn" class="btn line-btn">📩 LINEで送る</button>
+        ${linePushButtonHtml}
         <button id="msgBtn" class="btn fb-btn">💬 Messengerで案件URLを送る</button>
         <button id="copyBtn" class="btn copy-btn">🔗 案件URLをコピー</button>
       `;
@@ -621,7 +641,8 @@
       document.getElementById("stateBox").style.display = "none";
       document.title = title;
 
-      document.getElementById("linePushBtn").addEventListener("click", openLineTargetModal);
+      const linePushBtnEl = document.getElementById("linePushBtn");
+      if (linePushBtnEl) linePushBtnEl.addEventListener("click", openLineTargetModal);
       document.getElementById("msgBtn").addEventListener("click", () => {
         copyText(shareMessage);
         alert("案件URLをコピーしました。Messengerに貼り付けてください。");
@@ -651,60 +672,127 @@
       return JSON.parse(jsonStr);
     }
 
-    function handleGoogleSignIn(credentialResponse) {
-      const payload = decodeJwtPayload(credentialResponse.credential);
-      const email = payload.email;
-
-      showState("ログインを確認しています…", false);
-
-      const token = getQueryParam("token");
-      verifyAndLoadCase(token, email);
-    }
-
-    // 認証エラー専用の表示（showStateと違い「ログインし直す」ボタンを併せて出す）
-    function showAuthErrorState(message) {
+    // 認証エラー専用の表示（showStateと違い「ログインし直す」ボタンを併せて出す）。
+    // LINE経由の場合は「別のアカウントでログインし直す」という概念が無い
+    // （LINEアプリにログインしている本人のIDがそのまま使われるだけのため）
+    // ので、Googleログインのときだけボタンを出す。
+    function showAuthErrorState(message, authInfo) {
       const box = document.getElementById("stateBox");
       box.style.display = "block";
       document.getElementById("loginBox").style.display = "none";
       document.getElementById("app").style.display = "none";
+
+      const isGoogleAuth = authInfo && authInfo.email;
+      const retryButtonHtml = isGoogleAuth
+        ? `<button id="retryLoginBtn" class="btn line-btn">別のアカウントでログインし直す</button>`
+        : "";
+
       box.innerHTML = `
         <div style="color:#d33; font-weight:bold; margin-bottom:12px;">⚠️ ${escapeHtml(message)}</div>
-        <button id="retryLoginBtn" class="btn line-btn">別のアカウントでログインし直す</button>
+        ${retryButtonHtml}
       `;
-      document.getElementById("retryLoginBtn").addEventListener("click", retryLogin);
+      if (isGoogleAuth) {
+        document.getElementById("retryLoginBtn").addEventListener("click", retryGoogleLogin);
+      }
     }
 
-    // 「別のアカウントでログインし直す」ボタンの処理。
+    // 「別のアカウントでログインし直す」ボタンの処理（Googleログイン限定）。
     // disableAutoSelect() で「このブラウザで自動選択されたアカウント」の
     // 記録を一旦解除してからログイン画面に戻す。これを呼ばずに再度
     // prompt() するだけだと、同じアカウントが再び自動選択されてしまい
     // 「別のアカウントを選ぶ」ことができない。
-    function retryLogin() {
+    function retryGoogleLogin() {
       google.accounts.id.disableAutoSelect();
       showLoginScreen();
       google.accounts.id.prompt();
     }
 
-    // メールアドレスをサーバーに送って認証確認しつつ、成功すれば案件データを取得する。
-    // /api/data 側で verifyShareUser による認証チェックも行うため、実質的には
-    // 「認証チェック＋データ取得」を1回のAPI呼び出しにまとめている。
-    function verifyAndLoadCase(token, email) {
+    // 認証情報（emailまたはlineUserId）をサーバーに送って確認しつつ、
+    // 成功すれば案件データを取得する。
+    // /api/data 側で verifyShareUser（またはverifyShareUserByLineId）による
+    // 認証チェックも行うため、実質的には「認証チェック＋データ取得」を
+    // 1回のAPI呼び出しにまとめている。
+    function verifyAndLoadCase(token, authInfo) {
       showState("案件情報を読み込んでいます…", false);
 
-      fetchCaseData(token, email)
+      fetchCaseData(token, authInfo)
         .then(data => {
           if (data.error) {
             // 認証エラー（このアカウントではアクセスできません 等）はここに到達する。
-            // 「別のアカウントでログインし直す」ボタン付きのエラー画面を表示する。
-            showAuthErrorState(data.error);
+            showAuthErrorState(data.error, authInfo);
             return;
           }
-          currentUserEmail = email;
+          if (authInfo.email) {
+            currentUserEmail = authInfo.email;
+          } else if (authInfo.lineUserId) {
+            currentUserLineUserId = authInfo.lineUserId;
+          }
           renderCase(data);
         })
         .catch(err => {
           showState(err.message || "データの取得に失敗しました", true);
         });
+    }
+
+    // -------------------------------------------------------------
+    // 【LINEアプリ内蔵ブラウザでの認証（LIFF）】
+    // liff.init() 後、liff.isInClient() でLINEアプリ内蔵ブラウザかどうかを
+    // 判定する。内蔵ブラウザであれば liff.getProfile() でその場でLINEに
+    // ログイン済みの本人のLINEuserIdを取得できる（追加のログイン操作は不要）。
+    // -------------------------------------------------------------
+    function initLiffAndLoadCase(token) {
+      liff.init({ liffId: "2011463016-0MGVvN6M" })
+        .then(() => {
+          if (!liff.isInClient()) {
+            // LINEアプリ内蔵ブラウザではない（LIFF URLを外部ブラウザで開いた等）
+            // → 通常のGoogleログインへフォールバックする
+            initGoogleLoginAndLoadCase(token);
+            return;
+          }
+          if (!liff.isLoggedIn()) {
+            // 通常はLINEアプリ内なので自動的にログイン済みのはずだが、
+            // 念のためログインしていなければLINEログイン画面へ誘導する
+            liff.login({ redirectUri: window.location.href });
+            return;
+          }
+          return liff.getProfile().then(profile => {
+            verifyAndLoadCase(token, { lineUserId: profile.userId });
+          });
+        })
+        .catch(err => {
+          console.error("❌ LIFF初期化に失敗しました:", err);
+          // LIFFが使えない場合もGoogleログインへフォールバックする
+          initGoogleLoginAndLoadCase(token);
+        });
+    }
+
+    // -------------------------------------------------------------
+    // 【通常ブラウザでの認証（Google Identity Services）】
+    // 【重要】client_id は必ずご自身のGoogle CloudプロジェクトのクライアントIDに
+    // 差し替えること。
+    // -------------------------------------------------------------
+    function initGoogleLoginAndLoadCase(token) {
+      google.accounts.id.initialize({
+        client_id: "302132186875-fr0lh20940o7k9jrdg3drm4n5r19lm99.apps.googleusercontent.com",
+        callback: (credentialResponse) => {
+          const payload = decodeJwtPayload(credentialResponse.credential);
+          showState("ログインを確認しています…", false);
+          verifyAndLoadCase(token, { email: payload.email });
+        }
+      });
+
+      // ログイン画面のボタンを描画しておく（未ログイン時に表示される）
+      google.accounts.id.renderButton(
+        document.getElementById("googleSignInButton"),
+        { theme: "outline", size: "large", text: "signin_with", locale: "ja" }
+      );
+
+      showLoginScreen();
+
+      // 【自動ログイン】以前ログインしたことがあるブラウザでは、
+      // One Tap（画面右上に出る小さいログイン確認）を自動で試みる。
+      // ここで失敗（拒否・対象外等）しても、上記の通常ボタンからログインできる。
+      google.accounts.id.prompt();
     }
 
     (function init() {
@@ -719,27 +807,11 @@
         return;
       }
 
-      // 【重要】Google Identity Servicesの初期化。
-      // client_id は必ずご自身のGoogle CloudプロジェクトのクライアントIDに
-      // 差し替えること（下記はプレースホルダー）。
       window.onload = function () {
-        google.accounts.id.initialize({
-          client_id: "302132186875-fr0lh20940o7k9jrdg3drm4n5r19lm99.apps.googleusercontent.com",
-          callback: handleGoogleSignIn
-        });
-
-        // ログイン画面のボタンを描画しておく（未ログイン時に表示される）
-        google.accounts.id.renderButton(
-          document.getElementById("googleSignInButton"),
-          { theme: "outline", size: "large", text: "signin_with", locale: "ja" }
-        );
-
-        showLoginScreen();
-
-        // 【自動ログイン】以前ログインしたことがあるブラウザでは、
-        // One Tap（画面右上に出る小さいログイン確認）を自動で試みる。
-        // ここで失敗（拒否・対象外等）しても、上記の通常ボタンからログインできる。
-        google.accounts.id.prompt();
+        // 【重要】まずLIFFでの初期化を試みる。
+        // LINEアプリ内蔵ブラウザで開かれていればLINEuserIdでの自動認証、
+        // そうでなければ関数内でGoogleログインにフォールバックする。
+        initLiffAndLoadCase(token);
       };
     })();
   </script>
