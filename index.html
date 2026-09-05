@@ -6,6 +6,9 @@
 <!-- 環境依存パラメータ（config.js）はメイン処理より前に読み込む -->
 <script src="config.js"></script>
 
+<!-- Googleアカウントでのログイン確認（Sign In With Google）に使用 -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+
 <title>案件共有</title>
 <style>
   body {
@@ -123,6 +126,106 @@
     animation: spin 0.8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ログイン（Sign In With Google）表示エリア */
+  #loginBox {
+    max-width: 480px;
+    margin: 60px auto;
+    text-align: center;
+  }
+  #loginBox .login-desc {
+    color: #666;
+    margin-bottom: 16px;
+    font-size: 13px;
+  }
+  #googleSignInButton {
+    display: flex;
+    justify-content: center;
+  }
+
+  /* LINE宛先選択モーダル共通 */
+  .modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 15px;
+    box-sizing: border-box;
+  }
+  .modal-box {
+    background: #fff;
+    border-radius: 10px;
+    padding: 20px;
+    max-width: 480px;
+    width: 100%;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-sizing: border-box;
+  }
+  .modal-title {
+    font-size: 16px;
+    font-weight: bold;
+    margin-bottom: 12px;
+    color: #000;
+  }
+
+  /* 宛先トグルスイッチ（複数選択） */
+  .target-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 4px;
+    border-bottom: 1px solid #eee;
+  }
+  .target-item:last-child { border-bottom: none; }
+  .target-name { font-size: 14px; color: #333; }
+
+  .toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #ccc;
+    border-radius: 24px;
+    transition: 0.2s;
+  }
+  .toggle-slider::before {
+    position: absolute;
+    content: "";
+    height: 18px; width: 18px;
+    left: 3px; bottom: 3px;
+    background-color: #fff;
+    border-radius: 50%;
+    transition: 0.2s;
+  }
+  .toggle-switch input:checked + .toggle-slider { background-color: #06c755; }
+  .toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
+
+  .modal-btn-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .modal-btn-row .btn { margin-top: 0; }
+  .btn-secondary { background: #999; }
+  .btn-disabled { background: #ccc !important; cursor: not-allowed; }
+
+  .empty-message {
+    text-align: center;
+    color: #999;
+    font-size: 13px;
+    padding: 20px 0;
+  }
 </style>
 </head>
 <body>
@@ -132,7 +235,18 @@
     <div>案件共有ページ</div>
   </div>
 
+  <!-- 未ログイン時に表示するログイン画面 -->
+  <div id="loginBox" style="display:none;">
+    <div class="login-desc">この案件情報を見るには、登録済みのGoogleアカウントでログインしてください。</div>
+    <div id="googleSignInButton"></div>
+  </div>
+
   <div id="app" style="display:none;"></div>
+
+  <!-- LINE送信先選択・確認・完了 モーダル（内容はJSで都度差し替える） -->
+  <div id="lineModalOverlay" class="modal-overlay" style="display:none;">
+    <div id="lineModalBox" class="modal-box"></div>
+  </div>
 
   <script>
     function getQueryParam(name) {
@@ -146,25 +260,46 @@
     function showState(message, isError) {
       const box = document.getElementById("stateBox");
       box.style.display = "block";
+      document.getElementById("loginBox").style.display = "none";
       document.getElementById("app").style.display = "none";
       box.innerHTML = isError
         ? `<div style="color:#d33; font-weight:bold;">⚠️ ${escapeHtml(message)}</div>`
         : `<div class="spinner"></div><div>${escapeHtml(message)}</div>`;
     }
 
+    // -------------------------------------------------------------
+    // 【ログイン状態管理】
+    // currentUserEmail：Googleログインで確認できたメールアドレス。
+    //   これが確定するまでは案件データの取得（fetchCaseData）を行わない。
+    // -------------------------------------------------------------
+    let currentUserEmail = null;
+
+    function showLoginScreen() {
+      document.getElementById("stateBox").style.display = "none";
+      document.getElementById("app").style.display = "none";
+      document.getElementById("loginBox").style.display = "block";
+    }
+
     // 【CORS対策】
     // ブラウザからGASを直接fetchせず、同一オリジンのVercel API
     // (/api/data) を経由してサーバー側からGASへ接続する。
-    async function fetchCaseData(token) {
-      const url = `/api/data?token=${encodeURIComponent(token)}`;
+    // 【ログイン機能追加に伴いGET→POSTへ変更】
+    // 認証に使うメールアドレスをURL（クエリパラメータ）に乗せたくないため、
+    // token・emailの両方をリクエストボディに入れて送る。
+    async function fetchCaseData(token, email) {
+      const url = `/api/data`;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
 
       try {
         const response = await fetch(url, {
-          method: "GET",
+          method: "POST",
           signal: controller.signal,
-          headers: { "Accept": "application/json" }
+          headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ token: token, email: email })
         });
 
         clearTimeout(timeoutId);
@@ -172,12 +307,13 @@
         if (!response.ok) {
           let detail = "";
           try {
-            detail = await response.text();
+            const errBody = await response.json();
+            detail = errBody.error || "";
           } catch (_) {}
 
           throw new Error(
             detail
-              ? `HTTPエラー ${response.status}: ${detail}`
+              ? detail
               : `HTTPエラー: ${response.status}`
           );
         }
@@ -191,10 +327,202 @@
           throw new Error("データの取得がタイムアウトしました");
         }
 
-        throw new Error(
-          "データの取得に失敗しました（通信エラー）: " + err.message
-        );
+        throw new Error(err.message || "データの取得に失敗しました（通信エラー）");
       }
+    }
+
+    // -------------------------------------------------------------
+    // 【LINE Push送信機能】
+    // renderCase実行時に currentCaseForLine（案件情報）がセットされる。
+    // モーダルは「宛先選択」→「確認」→「完了」の3画面をこの1つのdiv
+    // （#lineModalBox）に順番に描画し直すことで表現する。
+    // -------------------------------------------------------------
+    let currentCaseForLine = null; // { shareToken, client, staff }
+    let selectedLineUserIds = [];  // トグルで選択中の宛先（複数）
+
+    function showLineModal(innerHtml) {
+      document.getElementById("lineModalBox").innerHTML = innerHtml;
+      document.getElementById("lineModalOverlay").style.display = "flex";
+    }
+
+    function closeLineModal() {
+      document.getElementById("lineModalOverlay").style.display = "none";
+    }
+
+    // 【宛先選択画面を開く】ボタン押下時のエントリポイント
+    async function openLineTargetModal() {
+      selectedLineUserIds = [];
+
+      showLineModal(`
+        <div class="modal-title">送信先を取得しています…</div>
+        <div class="spinner"></div>
+      `);
+
+      try {
+        const response = await fetch("/api/line-targets", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: currentUserEmail })
+        });
+        const resJson = await response.json();
+
+        if (!response.ok || resJson.status !== "success") {
+          throw new Error((resJson && resJson.error) || (resJson.data && resJson.data.message) || "送信先の取得に失敗しました");
+        }
+
+        renderLineTargetSelection(resJson.data.targets || []);
+
+      } catch (err) {
+        showLineModal(`
+          <div class="modal-title">エラー</div>
+          <div style="color:#d33;">${escapeHtml(err.message)}</div>
+          <div class="modal-btn-row">
+            <button class="btn btn-secondary" onclick="closeLineModal()">閉じる</button>
+          </div>
+        `);
+      }
+    }
+
+    // 【宛先選択画面の描画】トグルスイッチで複数選択できるようにする
+    function renderLineTargetSelection(targets) {
+      if (!targets || targets.length === 0) {
+        showLineModal(`
+          <div class="modal-title">LINEで送る</div>
+          <div class="empty-message">送信先として登録されているユーザーがいません。</div>
+          <div class="modal-btn-row">
+            <button class="btn btn-secondary" onclick="closeLineModal()">閉じる</button>
+          </div>
+        `);
+        return;
+      }
+
+      const itemsHtml = targets.map((t, idx) => `
+        <div class="target-item">
+          <span class="target-name">${escapeHtml(t.name)}</span>
+          <label class="toggle-switch">
+            <input type="checkbox" data-line-user-id="${escapeHtml(t.lineUserId)}" data-line-user-name="${escapeHtml(t.name)}" onchange="onLineTargetToggle(this)">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      `).join("");
+
+      showLineModal(`
+        <div class="modal-title">送信先を選択（複数選択可）</div>
+        ${itemsHtml}
+        <div class="modal-btn-row">
+          <button class="btn btn-secondary" onclick="closeLineModal()">キャンセル</button>
+          <button id="lineNextBtn" class="btn btn-disabled" disabled onclick="renderLineConfirmScreen()">次へ</button>
+        </div>
+      `);
+    }
+
+    // トグルのON/OFFに応じて選択中リストを更新し、「次へ」ボタンの活性状態を切り替える
+    function onLineTargetToggle(checkboxEl) {
+      const lineUserId = checkboxEl.dataset.lineUserId;
+      const lineUserName = checkboxEl.dataset.lineUserName;
+
+      if (checkboxEl.checked) {
+        if (!selectedLineUserIds.some(t => t.lineUserId === lineUserId)) {
+          selectedLineUserIds.push({ lineUserId: lineUserId, name: lineUserName });
+        }
+      } else {
+        selectedLineUserIds = selectedLineUserIds.filter(t => t.lineUserId !== lineUserId);
+      }
+
+      const nextBtn = document.getElementById("lineNextBtn");
+      if (nextBtn) {
+        const hasSelection = selectedLineUserIds.length > 0;
+        nextBtn.disabled = !hasSelection;
+        nextBtn.classList.toggle("btn-disabled", !hasSelection);
+      }
+    }
+
+    // 【確認画面】選択した宛先名を一覧表示し、最終確認を取る
+    function renderLineConfirmScreen() {
+      if (selectedLineUserIds.length === 0) return;
+
+      const namesHtml = selectedLineUserIds.map(t => escapeHtml(t.name)).join("、");
+
+      showLineModal(`
+        <div class="modal-title">この内容で送信しますか？</div>
+        <p>${namesHtml} さんに、案件情報をLINEで送信します。</p>
+        <div class="modal-btn-row">
+          <button class="btn btn-secondary" onclick="renderLineTargetSelection.call(null)" id="lineBackBtn">戻る</button>
+          <button class="btn line-btn" onclick="executeLinePush()">送信する</button>
+        </div>
+      `);
+      // 「戻る」は選択画面の再取得が必要なため、直前の選択状態を保ったまま
+      // 選択画面を作り直したいが、targetsを保持していないので再取得する。
+      document.getElementById("lineBackBtn").addEventListener("click", (e) => {
+        e.preventDefault();
+        openLineTargetModal();
+      }, { once: true });
+    }
+
+    // 【送信実行】確認後、実際にLINE Push送信APIを呼ぶ
+    async function executeLinePush() {
+      if (!currentCaseForLine) return;
+
+      showLineModal(`
+        <div class="modal-title">送信しています…</div>
+        <div class="spinner"></div>
+      `);
+
+      try {
+        const response = await fetch("/api/line-push", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: currentUserEmail,
+            shareToken: currentCaseForLine.shareToken,
+            client: currentCaseForLine.client,
+            staff: currentCaseForLine.staff,
+            targetLineUserIds: selectedLineUserIds.map(t => t.lineUserId)
+          })
+        });
+        const resJson = await response.json();
+
+        if (!response.ok || resJson.status !== "success") {
+          throw new Error((resJson && resJson.error) || "送信に失敗しました");
+        }
+
+        renderLineCompleteScreen(resJson.data);
+
+      } catch (err) {
+        showLineModal(`
+          <div class="modal-title">送信エラー</div>
+          <div style="color:#d33;">${escapeHtml(err.message)}</div>
+          <div class="modal-btn-row">
+            <button class="btn btn-secondary" onclick="closeLineModal()">閉じる</button>
+          </div>
+        `);
+      }
+    }
+
+    // 【完了画面】誰に送信できて、誰に失敗したかを表示する
+    function renderLineCompleteScreen(result) {
+      const succeeded = (result && result.succeeded) || [];
+      const failed = (result && result.failed) || [];
+
+      let html = `<div class="modal-title">送信結果</div>`;
+
+      if (succeeded.length > 0) {
+        html += `<p>✅ ${succeeded.map(escapeHtml).join("、")} さんに送信完了しました。</p>`;
+      }
+      if (failed.length > 0) {
+        html += `<p style="color:#d33;">⚠️ ${failed.map(f => escapeHtml(f.name)).join("、")} さんへの送信に失敗しました。</p>`;
+      }
+      if (succeeded.length === 0 && failed.length === 0) {
+        html += `<p>送信結果を取得できませんでした。</p>`;
+      }
+
+      html += `
+        <div class="modal-btn-row">
+          <button class="btn line-btn" onclick="closeLineModal()">閉じる</button>
+        </div>
+      `;
+
+      showLineModal(html);
     }
 
     function copyText(text) {
@@ -244,7 +572,14 @@
       const shareUrl = `${window.location.origin}/api/share?token=${encodeURIComponent(data.token)}`;
 
       const shareMessage = `${shareUrl}`;
-      const lineUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(shareMessage);
+
+      // 【LINE Push送信用】このモーダルは renderCase の外（グローバル変数）からも
+      // 参照するため、案件情報をここで保持しておく。
+      currentCaseForLine = {
+        shareToken: data.token,
+        client: client,
+        staff: staff
+      };
 
       const html = `
         <div class="card">
@@ -275,7 +610,7 @@
           <div class="small">${escapeHtml(shareUrl)}</div>
         </div>
 
-        <a href="${lineUrl}" class="btn line-btn" target="_blank" rel="noopener">📩 LINEで案件URLを送る</a>
+        <button id="linePushBtn" class="btn line-btn">📩 LINEで送る</button>
         <button id="msgBtn" class="btn fb-btn">💬 Messengerで案件URLを送る</button>
         <button id="copyBtn" class="btn copy-btn">🔗 案件URLをコピー</button>
       `;
@@ -286,6 +621,7 @@
       document.getElementById("stateBox").style.display = "none";
       document.title = title;
 
+      document.getElementById("linePushBtn").addEventListener("click", openLineTargetModal);
       document.getElementById("msgBtn").addEventListener("click", () => {
         copyText(shareMessage);
         alert("案件URLをコピーしました。Messengerに貼り付けてください。");
@@ -295,6 +631,80 @@
         copyText(shareUrl);
         alert("案件URLをコピーしました。");
       });
+    }
+
+    // -------------------------------------------------------------
+    // 【Googleログイン処理】
+    // Sign In With Google のコールバックとして呼ばれる。
+    // 取得したIDトークン（JWT）をデコードしてメールアドレスだけを取り出す。
+    // ※ ここではJWTの署名検証はしない（ブラウザ側では検証できないため）。
+    //   実際の正当性確認は、このメールアドレスをサーバー（GAS）へ送り、
+    //   ホワイトリストと照合する verifyShareUser の呼び出し側で行う。
+    //   ブラウザ側のデコードは「表示用のメールアドレスを取り出すだけ」の役割。
+    // -------------------------------------------------------------
+    function decodeJwtPayload(jwt) {
+      const base64Url = jwt.split(".")[1];
+      const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+      const jsonStr = decodeURIComponent(
+        atob(base64).split("").map(c => "%" + c.charCodeAt(0).toString(16).padStart(2, "0")).join("")
+      );
+      return JSON.parse(jsonStr);
+    }
+
+    function handleGoogleSignIn(credentialResponse) {
+      const payload = decodeJwtPayload(credentialResponse.credential);
+      const email = payload.email;
+
+      showState("ログインを確認しています…", false);
+
+      const token = getQueryParam("token");
+      verifyAndLoadCase(token, email);
+    }
+
+    // 認証エラー専用の表示（showStateと違い「ログインし直す」ボタンを併せて出す）
+    function showAuthErrorState(message) {
+      const box = document.getElementById("stateBox");
+      box.style.display = "block";
+      document.getElementById("loginBox").style.display = "none";
+      document.getElementById("app").style.display = "none";
+      box.innerHTML = `
+        <div style="color:#d33; font-weight:bold; margin-bottom:12px;">⚠️ ${escapeHtml(message)}</div>
+        <button id="retryLoginBtn" class="btn line-btn">別のアカウントでログインし直す</button>
+      `;
+      document.getElementById("retryLoginBtn").addEventListener("click", retryLogin);
+    }
+
+    // 「別のアカウントでログインし直す」ボタンの処理。
+    // disableAutoSelect() で「このブラウザで自動選択されたアカウント」の
+    // 記録を一旦解除してからログイン画面に戻す。これを呼ばずに再度
+    // prompt() するだけだと、同じアカウントが再び自動選択されてしまい
+    // 「別のアカウントを選ぶ」ことができない。
+    function retryLogin() {
+      google.accounts.id.disableAutoSelect();
+      showLoginScreen();
+      google.accounts.id.prompt();
+    }
+
+    // メールアドレスをサーバーに送って認証確認しつつ、成功すれば案件データを取得する。
+    // /api/data 側で verifyShareUser による認証チェックも行うため、実質的には
+    // 「認証チェック＋データ取得」を1回のAPI呼び出しにまとめている。
+    function verifyAndLoadCase(token, email) {
+      showState("案件情報を読み込んでいます…", false);
+
+      fetchCaseData(token, email)
+        .then(data => {
+          if (data.error) {
+            // 認証エラー（このアカウントではアクセスできません 等）はここに到達する。
+            // 「別のアカウントでログインし直す」ボタン付きのエラー画面を表示する。
+            showAuthErrorState(data.error);
+            return;
+          }
+          currentUserEmail = email;
+          renderCase(data);
+        })
+        .catch(err => {
+          showState(err.message || "データの取得に失敗しました", true);
+        });
     }
 
     (function init() {
@@ -309,18 +719,28 @@
         return;
       }
 
-      showState("案件情報を読み込んでいます…", false);
-      fetchCaseData(token)
-        .then(data => {
-          if (data.error) {
-            showState(data.error, true);
-            return;
-          }
-          renderCase(data);
-        })
-        .catch(err => {
-          showState(err.message || "データの取得に失敗しました", true);
+      // 【重要】Google Identity Servicesの初期化。
+      // client_id は必ずご自身のGoogle CloudプロジェクトのクライアントIDに
+      // 差し替えること（下記はプレースホルダー）。
+      window.onload = function () {
+        google.accounts.id.initialize({
+          client_id: "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
+          callback: handleGoogleSignIn
         });
+
+        // ログイン画面のボタンを描画しておく（未ログイン時に表示される）
+        google.accounts.id.renderButton(
+          document.getElementById("googleSignInButton"),
+          { theme: "outline", size: "large", text: "signin_with", locale: "ja" }
+        );
+
+        showLoginScreen();
+
+        // 【自動ログイン】以前ログインしたことがあるブラウザでは、
+        // One Tap（画面右上に出る小さいログイン確認）を自動で試みる。
+        // ここで失敗（拒否・対象外等）しても、上記の通常ボタンからログインできる。
+        google.accounts.id.prompt();
+      };
     })();
   </script>
 
