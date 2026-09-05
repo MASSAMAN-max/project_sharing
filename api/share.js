@@ -60,11 +60,15 @@ export default async function handler(req, res) {
     console.error("GAS Fetch Error:", e);
   }
 
+  // LINE表示用の装飾処理
+  const displayTitle = clientStr ? `📁 ${clientStr}` : `📁 ${title}`;
+  const description = "▶ 案件詳細を開く";
+
   const ogpHtml = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">` +
     `<meta property="og:type" content="website">` +
-    `<meta property="og:title" content="${escapeHtml(title)}">` +
-    `<meta property="og:description" content="${clientStr ? '発注元: ' + escapeHtml(clientStr) : '案件詳細をご確認ください'}">` +
-    `<title>${escapeHtml(title)}</title></head><body></body></html>`;
+    `<meta property="og:title" content="${escapeHtml(displayTitle)}">` +
+    `<meta property="og:description" content="${escapeHtml(description)}">` +
+    `<title>${escapeHtml(displayTitle)}</title></head><body></body></html>`;
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   return res.status(200).send(ogpHtml);
