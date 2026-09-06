@@ -6,13 +6,22 @@
 <!-- 環境依存パラメータ（config.js）はメイン処理より前に読み込む -->
 <script src="config.js"></script>
 
-<!-- Googleアカウントでのログイン確認（Sign In With Google）に使用 -->
-<script src="https://accounts.google.com/gsi/client" async defer></script>
-
-<!-- LINEアプリ内蔵ブラウザでの認証（LIFF）に使用。
-     Googleログインは、LINEアプリ内蔵ブラウザではブロックされてしまう
-     既知の制限があるため、LINE内蔵ブラウザで開かれた場合はこちらを使う。 -->
-<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<!-- 【速度改善】LINE内蔵ブラウザかどうかをUser-Agentで先に簡易判定し、
+     不要なSDKの読み込み自体をスキップする。
+     ・LINE内蔵ブラウザ → Googleログインはどのみち使わないため、
+       Google Identity ServicesのSDK読み込みを省略し、通信を1つ減らす。
+     ・それ以外（通常ブラウザ） → LIFF SDKの読み込みを省略する。
+     この判定はあくまで速度改善のための簡易判定であり、実際にどちらの
+     認証方式を使うかの最終判断は、この後 liff.isInClient() で
+     正式に行う（もしUser-Agentの判定がズレていても、initLiffAndLoadCase
+     内のフォールバック処理でGoogleログインに切り替わるため安全）。 -->
+<script>
+  document.write(
+    /Line/i.test(navigator.userAgent)
+      ? '<script src="https://static.line-scdn.net/liff/edge/2/sdk.js" defer><\/script>'
+      : '<script src="https://accounts.google.com/gsi/client" async defer><\/script>'
+  );
+</script>
 
 <title>案件共有</title>
 <style>
@@ -814,8 +823,16 @@
     // 差し替えること。
     // -------------------------------------------------------------
     function initGoogleLoginAndLoadCase(token) {
+      if (typeof google === "undefined") {
+        // 通常は発生しない想定（LINE内蔵ブラウザ判定が外れ、かつLIFFも
+        // 使えなかった場合のみ到達しうる）。SDK自体が読み込まれていない
+        // ため、ログイン手段を提供できない旨を表示する。
+        showState("ログイン機能の読み込みに失敗しました。ページを再読み込みしてください。", true);
+        return;
+      }
+
       google.accounts.id.initialize({
-        client_id: "302132186875-fr0lh20940o7k9jrdg3drm4n5r19lm99.apps.googleusercontent.com",
+        client_id: "302132186875fr0lh20940o7k9jrdg3drm4n5r19lm99-.apps.googleusercontent.com",
         callback: (credentialResponse) => {
           const payload = decodeJwtPayload(credentialResponse.credential);
           showState("ログインを確認しています…", false);
@@ -869,6 +886,21 @@
       }
 
       window.onload = function () {
+        // 【重要】liff SDK自体が読み込まれているか（=User-Agent判定で
+        // LINE内蔵ブラウザと判定されたか）を確認してから分岐する。
+        // 読み込まれていなければ、そもそもliffオブジェクトが存在せず
+        // initLiffAndLoadCase内でエラーになるため、ここで直接
+        // Googleログインへ進む（tokenはこの時点のURLから取得する）。
+        if (typeof liff === "undefined") {
+          const token = getQueryParam("token");
+          if (!token) {
+            showState("URLに共有トークン（?token=...）が指定されていません", true);
+            return;
+          }
+          initGoogleLoginAndLoadCase(token);
+          return;
+        }
+
         // 【重要】まずLIFFでの初期化を試みる。
         // LINEアプリ内蔵ブラウザで開かれていればLINEuserIdでの自動認証、
         // そうでなければ関数内でGoogleログインにフォールバックする。
