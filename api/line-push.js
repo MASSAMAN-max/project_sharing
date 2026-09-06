@@ -12,7 +12,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "このAPIはPOSTメソッドのみ受け付けます" });
   }
 
-  const { email, shareToken, client, staff, targetLineUserIds } = req.body || {};
+  const { email, shareToken, title, client, staff, address, workSchedule, targetLineUserIds } = req.body || {};
   const MAIN_APP_GAS_URL = process.env.MAIN_APP_GAS_URL;
 
   if (!email) {
@@ -40,8 +40,11 @@ export default async function handler(req, res) {
         payload: {
           email: email,
           shareToken: shareToken,
+          title: title || "",
           client: client || "",
           staff: staff || "",
+          address: address || "",
+          workSchedule: Array.isArray(workSchedule) ? workSchedule : [],
           targetLineUserIds: targetLineUserIds
         }
       })
