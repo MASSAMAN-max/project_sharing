@@ -9,13 +9,17 @@
 // 案件データを返すようにした。認証情報をURL（クエリパラメータ）に
 // 乗せたくないため、GET→POSTに変更している。
 //
-// 【2種類の認証方式（どちらか一方を送る）】
+// 【3種類の認証方式（いずれか1つを送る）】
 // ①email（Googleアカウントのメールアドレス）
 //     …通常ブラウザで開いた場合。Sign In With Googleで取得。
 // ②lineUserId（LINEのユーザーID）
 //     …LINEアプリ内蔵ブラウザで開いた場合。LIFFで取得。
 //   Googleログインは、LINEアプリ内蔵ブラウザではブロックされてしまう
 //   既知の制限があるため、この経路を別途用意している。
+// ③viewKey（メインアプリ経由の閲覧用一時トークン）
+//     …メインアプリ（atago-inc.vercel.app）の「共有」ボタンから開いた場合。
+//   メインアプリに既にログイン済みの人向けに、Google/LINEログインを
+//   省略できるようにするための、5分限定・この案件専用の一時トークン。
 //
 // 【2つのGASプロジェクトを呼び分けている点に注意】
 // ①GAS_URL（案件共有GAS）        …トークンから案件データ本体を取得する。
@@ -29,14 +33,14 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "このAPIはPOSTメソッドのみ受け付けます" });
   }
 
-  const { token, email, lineUserId } = req.body || {};
+  const { token, email, lineUserId, viewKey } = req.body || {};
   const GAS_URL = process.env.GAS_URL;
   const MAIN_APP_GAS_URL = process.env.MAIN_APP_GAS_URL;
 
   if (!token) {
     return res.status(400).json({ error: "共有トークンが指定されていません" });
   }
-  if (!email && !lineUserId) {
+  if (!email && !lineUserId && !viewKey) {
     return res.status(401).json({ error: "ログインが必要です" });
   }
 
@@ -49,13 +53,23 @@ export default async function handler(req, res) {
   try {
     // -------------------------------------------------------------
     // ①まず認証チェック（メインアプリGASへ）
-    // email があれば通常のGoogleログイン照合、無ければLINEuserIdでの
-    // 照合を行う（両方来ることは無い想定だが、来た場合はemailを優先する）。
-    // ここで失敗した場合は、案件共有GASへの問い合わせ自体を行わない
-    // （＝未認証のユーザーに案件データが渡る隙を作らない）。
+    // viewKey → email → lineUserId の優先順位で、渡されたものに応じた
+    // 認証アクションを呼び分ける。ここで失敗した場合は、案件共有GASへの
+    // 問い合わせ自体を行わない（＝未認証のユーザーに案件データが
+    // 渡る隙を作らない）。
     // -------------------------------------------------------------
-    const authAction = email ? "verifyShareUser" : "verifyShareUserByLineId";
-    const authPayload = email ? { email: email } : { lineUserId: lineUserId };
+    let authAction;
+    let authPayload;
+    if (viewKey) {
+      authAction = "verifyShareViewKey";
+      authPayload = { viewKey: viewKey, shareToken: token };
+    } else if (email) {
+      authAction = "verifyShareUser";
+      authPayload = { email: email };
+    } else {
+      authAction = "verifyShareUserByLineId";
+      authPayload = { lineUserId: lineUserId };
+    }
 
     const authRes = await fetch(MAIN_APP_GAS_URL, {
       method: "POST",
