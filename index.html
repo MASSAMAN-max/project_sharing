@@ -424,7 +424,7 @@
         ${itemsHtml}
         <div class="modal-btn-row">
           <button class="btn btn-secondary" onclick="closeLineModal()">キャンセル</button>
-          <button id="lineNextBtn" class="btn btn-disabled" disabled onclick="renderLineConfirmScreen()">次へ</button>
+          <button id="lineNextBtn" class="btn line-btn btn-disabled" disabled onclick="renderLineConfirmScreen()">次へ</button>
         </div>
       `);
     }
@@ -488,8 +488,11 @@
           body: JSON.stringify({
             email: currentUserEmail,
             shareToken: currentCaseForLine.shareToken,
+            title: currentCaseForLine.title,
             client: currentCaseForLine.client,
             staff: currentCaseForLine.staff,
+            address: currentCaseForLine.address,
+            workSchedule: currentCaseForLine.workSchedule,
             targetLineUserIds: selectedLineUserIds.map(t => t.lineUserId)
           })
         });
@@ -590,8 +593,11 @@
       // 参照するため、案件情報をここで保持しておく。
       currentCaseForLine = {
         shareToken: data.token,
+        title: title,
         client: client,
-        staff: staff
+        staff: staff,
+        address: address,
+        workSchedule: workSchedule
       };
 
       // LINE経由でログインした場合はメールアドレスを持たないため、
@@ -623,11 +629,6 @@
           <hr>
 
           <p><a href="${mapUrl}" class="map-link" target="_blank" rel="noopener">📍 Googleマップを開く</a></p>
-
-          <hr>
-
-          <div class="section-title">共有URL</div>
-          <div class="small">${escapeHtml(shareUrl)}</div>
         </div>
 
         ${linePushButtonHtml}
@@ -792,7 +793,7 @@
     // -------------------------------------------------------------
     function initGoogleLoginAndLoadCase(token) {
       google.accounts.id.initialize({
-        client_id: "302132186875-fr0lh20940o7k9jrdg3drm4n5r19lm99.apps.googleusercontent.com",
+        client_id: "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
         callback: (credentialResponse) => {
           const payload = decodeJwtPayload(credentialResponse.credential);
           showState("ログインを確認しています…", false);
