@@ -525,6 +525,8 @@
             staff: currentCaseForLine.staff,
             address: currentCaseForLine.address,
             workSchedule: currentCaseForLine.workSchedule,
+            attached: currentCaseForLine.attached,
+            mapUrl: currentCaseForLine.mapUrl,
             targetLineUserIds: selectedLineUserIds.map(t => t.lineUserId)
           })
         });
@@ -629,7 +631,9 @@
         client: client,
         staff: staff,
         address: address,
-        workSchedule: workSchedule
+        workSchedule: workSchedule,
+        attached: attached,
+        mapUrl: (mapUrl && mapUrl !== "#") ? mapUrl : ""
       };
 
       // email（Googleログイン）でもlineUserId（LINE内蔵ブラウザ）でも
