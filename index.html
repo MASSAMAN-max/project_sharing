@@ -793,7 +793,7 @@
     // -------------------------------------------------------------
     function initGoogleLoginAndLoadCase(token) {
       google.accounts.id.initialize({
-        client_id: "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
+        client_id: "302132186875-fr0lh20940o7k9jrdg3drm4n5r19lm99.apps.googleusercontent.com",
         callback: (credentialResponse) => {
           const payload = decodeJwtPayload(credentialResponse.credential);
           showState("ログインを確認しています…", false);
