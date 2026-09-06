@@ -739,10 +739,23 @@
     // liff.init() 後、liff.isInClient() でLINEアプリ内蔵ブラウザかどうかを
     // 判定する。内蔵ブラウザであれば liff.getProfile() でその場でLINEに
     // ログイン済みの本人のLINEuserIdを取得できる（追加のログイン操作は不要）。
+    //
+    // 【tokenの取得タイミングについて】
+    // LIFF URL（https://liff.line.me/...）経由でアクセスされた場合、
+    // LINE側で実際のエンドポイントURLへリダイレクトする処理が入るため、
+    // 必ず liff.init() が完了した後に window.location から取得し直す
+    // （init()より前に取得すると、リダイレクト前の古いURLを見てしまい
+    //   トークンが取得できないことがある）。
     // -------------------------------------------------------------
-    function initLiffAndLoadCase(token) {
+    function initLiffAndLoadCase() {
       liff.init({ liffId: "2011463016-0MGVvN6M" })
         .then(() => {
+          const token = getQueryParam("token");
+          if (!token) {
+            showState("URLに共有トークン（?token=...）が指定されていません", true);
+            return;
+          }
+
           if (!liff.isInClient()) {
             // LINEアプリ内蔵ブラウザではない（LIFF URLを外部ブラウザで開いた等）
             // → 通常のGoogleログインへフォールバックする
@@ -762,6 +775,12 @@
         .catch(err => {
           console.error("❌ LIFF初期化に失敗しました:", err);
           // LIFFが使えない場合もGoogleログインへフォールバックする
+          // （tokenはこの時点のURLから取得し直す）
+          const token = getQueryParam("token");
+          if (!token) {
+            showState("URLに共有トークン（?token=...）が指定されていません", true);
+            return;
+          }
           initGoogleLoginAndLoadCase(token);
         });
     }
@@ -773,7 +792,7 @@
     // -------------------------------------------------------------
     function initGoogleLoginAndLoadCase(token) {
       google.accounts.id.initialize({
-        client_id: "302132186875-fr0lh20940o7k9jrdg3drm4n5r19lm99.apps.googleusercontent.com",
+        client_id: "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
         callback: (credentialResponse) => {
           const payload = decodeJwtPayload(credentialResponse.credential);
           showState("ログインを確認しています…", false);
@@ -800,18 +819,18 @@
       // GAS接続はVercelの /api/data が担当する。
       // config.jsは既存構成との互換性のため読み込み可能なままにしている。
 
-      // URLは No ではなく共有トークン（?token=...）を使う
-      const token = getQueryParam("token");
-      if (!token) {
-        showState("URLに共有トークン（?token=...）が指定されていません", true);
-        return;
-      }
-
+      // 【重要】tokenの取得は、ここ（ページ読み込み直後）ではなく
+      // initLiffAndLoadCase内、liff.init()完了後に行う。
+      // LIFF URL（https://liff.line.me/...）経由でアクセスされた場合、
+      // LINE側で実際のエンドポイントURLへリダイレクトする処理が入るため、
+      // ページ読み込み直後の時点ではクエリパラメータがまだ正しく
+      // 反映されていないことがある（liff.init()完了後であれば確実に
+      // 最終的なURLになっている）。
       window.onload = function () {
         // 【重要】まずLIFFでの初期化を試みる。
         // LINEアプリ内蔵ブラウザで開かれていればLINEuserIdでの自動認証、
         // そうでなければ関数内でGoogleログインにフォールバックする。
-        initLiffAndLoadCase(token);
+        initLiffAndLoadCase();
       };
     })();
   </script>
