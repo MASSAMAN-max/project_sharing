@@ -277,14 +277,16 @@
     // currentUserEmail：Googleログインで確認できたメールアドレス。
     //   これが確定するまでは案件データの取得（fetchCaseData）を行わない。
     // currentUserLineUserId：LIFF経由で確認できたLINEuserId。
-    //   LINEアプリ内蔵ブラウザで開いた場合はこちらが使われ、
-    //   currentUserEmailはnullのままになる。
-    //   ※ LINE経由でログインした場合、「LINEで送る」機能（宛先選択して
-    //   送信する機能）はメールアドレスが無いため使用できない。
-    //   案件詳細の閲覧のみ可能とする。
+    //   LINEアプリ内蔵ブラウザで開いた場合はこちらが使われる。
+    // currentUserViewKey：メインアプリの「共有」ボタン経由で確認できた
+    //   閲覧用一時トークン。有効期限は5分間で、この案件（shareToken）
+    //   専用。この期限内であれば「LINEで送る」機能もこれを使って認証する。
+    // どの認証方式でログインしても「LINEで送る」機能を使えるようにして
+    // いるため、3つのうちどれか1つだけが値を持つ状態になる。
     // -------------------------------------------------------------
     let currentUserEmail = null;
     let currentUserLineUserId = null;
+    let currentUserViewKey = null;
 
     function showLoginScreen() {
       document.getElementById("stateBox").style.display = "none";
@@ -362,6 +364,27 @@
       document.getElementById("lineModalOverlay").style.display = "none";
     }
 
+    // 現在ログイン済みの認証情報を { email } または { lineUserId } の
+    // 形で返す。Googleログイン経由ならemail、LINE内蔵ブラウザ（LIFF）
+    // 経由ならlineUserIdが入っている前提（両方揃うことは無い想定）。
+    // 現在ログイン済みの認証情報を返す。
+    // Googleログイン経由なら { email }、LINE内蔵ブラウザ（LIFF）経由なら
+    // { lineUserId }、メインアプリの「共有」ボタン経由なら { viewKey } が
+    // 入っている（3つのうちどれか1つだけが値を持つ想定）。
+    // viewKeyでの認証にはshareTokenとのセット確認が必須のため、
+    // どの方式であっても常にshareTokenを一緒に返す
+    // （email・lineUserIdの認証では単に無視される）。
+    function getCurrentAuthInfo() {
+      const shareToken = currentCaseForLine ? currentCaseForLine.shareToken : null;
+      if (currentUserViewKey) {
+        return { viewKey: currentUserViewKey, shareToken: shareToken };
+      }
+      if (currentUserEmail) {
+        return { email: currentUserEmail, shareToken: shareToken };
+      }
+      return { lineUserId: currentUserLineUserId, shareToken: shareToken };
+    }
+
     // 【宛先選択画面を開く】ボタン押下時のエントリポイント
     async function openLineTargetModal() {
       selectedLineUserIds = [];
@@ -375,7 +398,7 @@
         const response = await fetch("/api/line-targets", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: currentUserEmail })
+          body: JSON.stringify(getCurrentAuthInfo())
         });
         const resJson = await response.json();
 
@@ -486,7 +509,7 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            email: currentUserEmail,
+            ...getCurrentAuthInfo(),
             shareToken: currentCaseForLine.shareToken,
             title: currentCaseForLine.title,
             client: currentCaseForLine.client,
@@ -600,12 +623,9 @@
         workSchedule: workSchedule
       };
 
-      // LINE経由でログインした場合はメールアドレスを持たないため、
-      // 「LINEで送る」機能（宛先選択して送信する機能）は使えない。
-      // ボタン自体を出さないことで、押しても失敗する状態を防ぐ。
-      const linePushButtonHtml = currentUserEmail
-        ? `<button id="linePushBtn" class="btn line-btn">📩 LINEで送る</button>`
-        : "";
+      // email（Googleログイン）でもlineUserId（LINE内蔵ブラウザ）でも
+      // 送信機能を使えるようになったため、ボタンは常に表示する。
+      const linePushButtonHtml = `<button id="linePushBtn" class="btn line-btn">📩 LINEで送る</button>`;
 
       const html = `
         <div class="card">
@@ -727,6 +747,8 @@
             currentUserEmail = authInfo.email;
           } else if (authInfo.lineUserId) {
             currentUserLineUserId = authInfo.lineUserId;
+          } else if (authInfo.viewKey) {
+            currentUserViewKey = authInfo.viewKey;
           }
           renderCase(data);
         })
@@ -827,6 +849,25 @@
       // ページ読み込み直後の時点ではクエリパラメータがまだ正しく
       // 反映されていないことがある（liff.init()完了後であれば確実に
       // 最終的なURLになっている）。
+      //
+      // 【viewKeyについて】
+      // メインアプリの「共有」ボタン経由で開かれた場合、URLに
+      // viewKey（閲覧用一時トークン）が付与されている。この場合は
+      // Google/LINEログインを一切行わず、最優先でこれを使って認証する
+      // （メインアプリ側で既にログイン済みであることが保証されているため）。
+      // viewKeyはリダイレクトを挟まない通常のURLパラメータなので、
+      // LIFFのように init() 完了を待つ必要はなく、ここで直接判定できる。
+      const viewKey = getQueryParam("viewKey");
+      if (viewKey) {
+        const token = getQueryParam("token");
+        if (!token) {
+          showState("URLに共有トークン（?token=...）が指定されていません", true);
+          return;
+        }
+        verifyAndLoadCase(token, { viewKey: viewKey });
+        return;
+      }
+
       window.onload = function () {
         // 【重要】まずLIFFでの初期化を試みる。
         // LINEアプリ内蔵ブラウザで開かれていればLINEuserIdでの自動認証、
