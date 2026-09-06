@@ -3,8 +3,10 @@
 // -----------------------------------------------------------------------
 // 選択された宛先（複数可）に、案件情報のFlex MessageをLINE Pushで
 // 送信するための中継API。副作用のある操作（実際にLINEメッセージが
-// 届く）ため、GAS側で email による再認証を必ず行わせている
-// （08_案件共有連携.js の handleShareAppAction 参照）。
+// 届く）ため、GAS側で email／lineUserId／viewKey のいずれかによる
+// 再認証を必ず行わせている（08_案件共有連携.js の handleShareAppAction 参照）。
+// email はGoogleログイン経由、lineUserIdはLINE内蔵ブラウザ（LIFF）経由、
+// viewKeyはメインアプリの「共有」ボタン経由の人に対応する。
 // =====================================================================
 
 export default async function handler(req, res) {
@@ -12,11 +14,11 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "このAPIはPOSTメソッドのみ受け付けます" });
   }
 
-  const { email, shareToken, title, client, staff, address, workSchedule, targetLineUserIds } = req.body || {};
+  const { email, lineUserId, viewKey, shareToken, title, client, staff, address, workSchedule, targetLineUserIds } = req.body || {};
   const MAIN_APP_GAS_URL = process.env.MAIN_APP_GAS_URL;
 
-  if (!email) {
-    return res.status(400).json({ error: "メールアドレスが指定されていません" });
+  if (!email && !lineUserId && !viewKey) {
+    return res.status(400).json({ error: "認証情報が指定されていません" });
   }
   if (!shareToken) {
     return res.status(400).json({ error: "共有トークンが指定されていません" });
@@ -39,6 +41,8 @@ export default async function handler(req, res) {
         action: "sendLinePush",
         payload: {
           email: email,
+          lineUserId: lineUserId,
+          viewKey: viewKey,
           shareToken: shareToken,
           title: title || "",
           client: client || "",
