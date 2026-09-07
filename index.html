@@ -560,7 +560,8 @@
         html += `<p>✅ ${succeeded.map(escapeHtml).join("、")} さんに送信完了しました。</p>`;
       }
       if (failed.length > 0) {
-        html += `<p style="color:#d33;">⚠️ ${failed.map(f => escapeHtml(f.name)).join("、")} さんへの送信に失敗しました。</p>`;
+        const failedDetails = failed.map(f => `${escapeHtml(f.name)}（${escapeHtml(f.message || "理由不明")}）`).join("、");
+        html += `<p style="color:#d33;">⚠️ ${failedDetails} さんへの送信に失敗しました。</p>`;
       }
       if (succeeded.length === 0 && failed.length === 0) {
         html += `<p>送信結果を取得できませんでした。</p>`;
