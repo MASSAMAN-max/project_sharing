@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 環境依存パラメータ（LIFF_ID等）はメイン処理より前に読み込む -->
+<script src="config.js"></script>
+
+<title>案件共有 - 送信方法を選択</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 15px;
+    font-size: 14px;
+    color: #333;
+    background: #f4f4f4;
+    margin: 0;
+  }
+
+  .card {
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 20px;
+    background: #fff;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    max-width: 480px;
+    margin: 60px auto 20px auto;
+    text-align: center;
+  }
+
+  h2 {
+    font-size: 18px;
+    margin-top: 0;
+    color: #000;
+  }
+
+  .btn {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    text-align: center;
+    padding: 15px 0;
+    color: white;
+    text-decoration: none;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 16px;
+    margin: 10px auto 0 auto;
+    border: none;
+    cursor: pointer;
+  }
+
+  .line-btn { background: #06c755; }
+  .fb-btn { background: #0084ff; }
+  .copy-btn { background: #666; }
+
+  #stateBox {
+    max-width: 480px;
+    margin: 40px auto;
+    text-align: center;
+    color: #666;
+  }
+</style>
+</head>
+<body>
+
+  <div id="stateBox">
+    <div>読み込んでいます…</div>
+  </div>
+
+  <div id="app" style="display:none;"></div>
+
+  <script>
+    function getQueryParam(name) {
+      return new URLSearchParams(window.location.search).get(name);
+    }
+
+    function showState(message, isError) {
+      const box = document.getElementById("stateBox");
+      box.style.display = "block";
+      document.getElementById("app").style.display = "none";
+      box.innerHTML = isError
+        ? `<div style="color:#d33; font-weight:bold;">⚠️ ${message}</div>`
+        : `<div>${message}</div>`;
+    }
+
+    function copyText(text) {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "absolute";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, 99999);
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+
+    (function init() {
+      const token = getQueryParam("token");
+      if (!token) {
+        showState("URLに共有トークン（?token=...）が指定されていません", true);
+        return;
+      }
+
+      // -------------------------------------------------------------
+      // 【設計方針】このページはGAS通信を一切行わない、軽量な選択画面。
+      // 「誰が」「どの案件を」共有しようとしているかの認証・特定は
+      // 一切せず、URLに含まれるtokenをそのまま各リンク生成に使い回す。
+      // 実際の認証（本人確認）は、リンク先の index.html 側で行われる。
+      //
+      // ・LINE送信　　　　→ LIFF URLをLINEの共有画面に渡す
+      //     （相手がLIFF経由で開くことで、開いた本人のLINEuserIdを
+      //      自動取得できるようにするため）
+      // ・Messenger送信　→ /api/share（OGP付き中継ページ）のURLを渡す
+      // ・コピー　　　　　→ 同じく /api/share のURLをコピーする
+      // -------------------------------------------------------------
+      const shareUrl = `${window.location.origin}/api/share?token=${encodeURIComponent(token)}`;
+      const liffUrl = `https://liff.line.me/${CONFIG.LIFF_ID}?token=${encodeURIComponent(token)}`;
+      const lineShareUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(liffUrl);
+
+      const html = `
+        <div class="card">
+          <h2>送信方法を選択してください</h2>
+          <a href="${lineShareUrl}" class="btn line-btn" target="_blank" rel="noopener">📩 LINEで送る</a>
+          <button id="msgBtn" class="btn fb-btn">💬 Messengerで送る</button>
+          <button id="copyBtn" class="btn copy-btn">🔗 URLをコピー</button>
+        </div>
+      `;
+
+      const app = document.getElementById("app");
+      app.innerHTML = html;
+      app.style.display = "block";
+      document.getElementById("stateBox").style.display = "none";
+
+      document.getElementById("msgBtn").addEventListener("click", () => {
+        copyText(shareUrl);
+        alert("案件URLをコピーしました。Messengerに貼り付けてください。");
+        window.open("https://m.me/", "_blank");
+      });
+      document.getElementById("copyBtn").addEventListener("click", () => {
+        copyText(shareUrl);
+        alert("案件URLをコピーしました。");
+      });
+    })();
+  </script>
+
+</body>
+</html>
