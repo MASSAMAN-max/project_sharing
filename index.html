@@ -534,8 +534,7 @@
 
     // -------------------------------------------------------------
     // 【通常ブラウザでの認証（Google Identity Services）】
-    // 【重要】client_id は必ずご自身のGoogle CloudプロジェクトのクライアントIDに
-    // 差し替えること。
+    // client_id は config.js の CONFIG.GOOGLE_CLIENT_ID を参照する。
     // -------------------------------------------------------------
     function initGoogleLoginAndLoadCase(token) {
       if (typeof google === "undefined") {
@@ -547,7 +546,7 @@
       }
 
       google.accounts.id.initialize({
-        client_id: "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
+        client_id: CONFIG.GOOGLE_CLIENT_ID,
         callback: (credentialResponse) => {
           const payload = decodeJwtPayload(credentialResponse.credential);
           showState("ログインを確認しています…", false);
