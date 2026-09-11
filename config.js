@@ -14,5 +14,5 @@ const CONFIG = {
   // Google Cloud ConsoleのOAuthクライアントIDをここに設定する。
   // 以前index.html内に直接ハードコードしていたが、他の環境依存値
   // （LIFF_ID等）と同様にconfig.jsへ一元化した。
-  GOOGLE_CLIENT_ID: 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com'
+  GOOGLE_CLIENT_ID: '302132186875-fr0lh20940o7k9jrdg3drm4n5r19lm99.apps.googleusercontent.com'
 };
