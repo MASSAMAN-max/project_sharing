@@ -156,90 +156,6 @@
     display: flex;
     justify-content: center;
   }
-
-  /* LINE宛先選択モーダル共通 */
-  .modal-overlay {
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0,0,0,0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-    padding: 15px;
-    box-sizing: border-box;
-  }
-  .modal-box {
-    background: #fff;
-    border-radius: 10px;
-    padding: 20px;
-    max-width: 480px;
-    width: 100%;
-    max-height: 80vh;
-    overflow-y: auto;
-    box-sizing: border-box;
-  }
-  .modal-title {
-    font-size: 16px;
-    font-weight: bold;
-    margin-bottom: 12px;
-    color: #000;
-  }
-
-  /* 宛先トグルスイッチ（複数選択） */
-  .target-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 4px;
-    border-bottom: 1px solid #eee;
-  }
-  .target-item:last-child { border-bottom: none; }
-  .target-name { font-size: 14px; color: #333; }
-
-  .toggle-switch {
-    position: relative;
-    display: inline-block;
-    width: 44px;
-    height: 24px;
-    flex-shrink: 0;
-  }
-  .toggle-switch input { opacity: 0; width: 0; height: 0; }
-  .toggle-slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background-color: #ccc;
-    border-radius: 24px;
-    transition: 0.2s;
-  }
-  .toggle-slider::before {
-    position: absolute;
-    content: "";
-    height: 18px; width: 18px;
-    left: 3px; bottom: 3px;
-    background-color: #fff;
-    border-radius: 50%;
-    transition: 0.2s;
-  }
-  .toggle-switch input:checked + .toggle-slider { background-color: #06c755; }
-  .toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
-
-  .modal-btn-row {
-    display: flex;
-    gap: 10px;
-    margin-top: 16px;
-  }
-  .modal-btn-row .btn { margin-top: 0; }
-  .btn-secondary { background: #999; }
-  .btn-disabled { background: #ccc !important; cursor: not-allowed; }
-
-  .empty-message {
-    text-align: center;
-    color: #999;
-    font-size: 13px;
-    padding: 20px 0;
-  }
 </style>
 </head>
 <body>
@@ -256,11 +172,6 @@
   </div>
 
   <div id="app" style="display:none;"></div>
-
-  <!-- LINE送信先選択・確認・完了 モーダル（内容はJSで都度差し替える） -->
-  <div id="lineModalOverlay" class="modal-overlay" style="display:none;">
-    <div id="lineModalBox" class="modal-box"></div>
-  </div>
 
   <script>
     function getQueryParam(name) {
@@ -287,15 +198,10 @@
     //   これが確定するまでは案件データの取得（fetchCaseData）を行わない。
     // currentUserLineUserId：LIFF経由で確認できたLINEuserId。
     //   LINEアプリ内蔵ブラウザで開いた場合はこちらが使われる。
-    // currentUserViewKey：メインアプリの「共有」ボタン経由で確認できた
-    //   閲覧用一時トークン。有効期限は5分間で、この案件（shareToken）
-    //   専用。この期限内であれば「LINEで送る」機能もこれを使って認証する。
-    // どの認証方式でログインしても「LINEで送る」機能を使えるようにして
-    // いるため、3つのうちどれか1つだけが値を持つ状態になる。
+    // どちらか1つだけが値を持つ状態になる。
     // -------------------------------------------------------------
     let currentUserEmail = null;
     let currentUserLineUserId = null;
-    let currentUserViewKey = null;
 
     function showLoginScreen() {
       document.getElementById("stateBox").style.display = "none";
@@ -355,237 +261,51 @@
       }
     }
 
-    // -------------------------------------------------------------
-    // 【LINE Push送信機能】
-    // renderCase実行時に currentCaseForLine（案件情報）がセットされる。
-    // モーダルは「宛先選択」→「確認」→「完了」の3画面をこの1つのdiv
-    // （#lineModalBox）に順番に描画し直すことで表現する。
-    // -------------------------------------------------------------
-    let currentCaseForLine = null; // { shareToken, client, staff }
-    let selectedLineUserIds = [];  // トグルで選択中の宛先（複数）
+    // 【操作ログ用】案件情報の保持。renderCase実行時にセットされ、
+    // logShareAppAction関数から「どの案件での操作か」を判定するために使う。
+    let currentCaseForLine = null; // { shareToken, caseNo }
 
-    function showLineModal(innerHtml) {
-      document.getElementById("lineModalBox").innerHTML = innerHtml;
-      document.getElementById("lineModalOverlay").style.display = "flex";
-    }
-
-    function closeLineModal() {
-      document.getElementById("lineModalOverlay").style.display = "none";
-    }
-
-    // 現在ログイン済みの認証情報を { email } または { lineUserId } の
-    // 形で返す。Googleログイン経由ならemail、LINE内蔵ブラウザ（LIFF）
-    // 経由ならlineUserIdが入っている前提（両方揃うことは無い想定）。
     // 現在ログイン済みの認証情報を返す。
     // Googleログイン経由なら { email }、LINE内蔵ブラウザ（LIFF）経由なら
-    // { lineUserId }、メインアプリの「共有」ボタン経由なら { viewKey } が
-    // 入っている（3つのうちどれか1つだけが値を持つ想定）。
-    // viewKeyでの認証にはshareTokenとのセット確認が必須のため、
-    // どの方式であっても常にshareTokenを一緒に返す
-    // （email・lineUserIdの認証では単に無視される）。
+    // { lineUserId } が入っている（どちらか1つだけが値を持つ想定）。
     function getCurrentAuthInfo() {
       const shareToken = currentCaseForLine ? currentCaseForLine.shareToken : null;
-      if (currentUserViewKey) {
-        return { viewKey: currentUserViewKey, shareToken: shareToken };
-      }
       if (currentUserEmail) {
         return { email: currentUserEmail, shareToken: shareToken };
       }
       return { lineUserId: currentUserLineUserId, shareToken: shareToken };
     }
 
-    // 【宛先選択画面を開く】ボタン押下時のエントリポイント
-    async function openLineTargetModal() {
-      selectedLineUserIds = [];
-
-      showLineModal(`
-        <div class="modal-title">送信先を取得しています…</div>
-        <div class="spinner"></div>
-      `);
-
+    // -------------------------------------------------------------
+    // 【操作ログの記録】
+    // 「案件ページ開封」等の操作を、案件共有GAS側の操作ログシートに
+    // 記録する。認証情報（email/lineUserId）は分かる範囲でそのまま渡す。
+    //
+    // 【重要】このログ送信は失敗してもユーザー体験に一切影響させない。
+    // ログ記録はあくまで補助的な機能であり、これが失敗したことを理由に
+    // 案件詳細の表示を止めたり、エラー表示を出したりしてはならない。
+    // そのため await はするがcatchで握りつぶし、コンソールにのみ出力する。
+    // -------------------------------------------------------------
+    async function logShareAppAction(actionName, detail) {
       try {
-        const response = await fetch("/api/line-targets", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(getCurrentAuthInfo())
-        });
-        const resJson = await response.json();
+        const authInfo = getCurrentAuthInfo();
+        const caseNo = currentCaseForLine ? currentCaseForLine.caseNo : "";
 
-        if (!response.ok || resJson.status !== "success") {
-          throw new Error((resJson && resJson.error) || (resJson.data && resJson.data.message) || "送信先の取得に失敗しました");
-        }
-
-        renderLineTargetSelection(resJson.data.targets || []);
-
-      } catch (err) {
-        showLineModal(`
-          <div class="modal-title">エラー</div>
-          <div style="color:#d33;">${escapeHtml(err.message)}</div>
-          <div class="modal-btn-row">
-            <button class="btn btn-secondary" onclick="closeLineModal()">閉じる</button>
-          </div>
-        `);
-      }
-    }
-
-    // 【宛先選択画面の描画】トグルスイッチで複数選択できるようにする
-    function renderLineTargetSelection(targets) {
-      if (!targets || targets.length === 0) {
-        showLineModal(`
-          <div class="modal-title">LINEで送る</div>
-          <div class="empty-message">送信先として登録されているユーザーがいません。</div>
-          <div class="modal-btn-row">
-            <button class="btn btn-secondary" onclick="closeLineModal()">閉じる</button>
-          </div>
-        `);
-        return;
-      }
-
-      const itemsHtml = targets.map((t, idx) => `
-        <div class="target-item">
-          <span class="target-name">${escapeHtml(t.name)}</span>
-          <label class="toggle-switch">
-            <input type="checkbox" data-line-user-id="${escapeHtml(t.lineUserId)}" data-line-user-name="${escapeHtml(t.name)}" onchange="onLineTargetToggle(this)">
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-      `).join("");
-
-      showLineModal(`
-        <div class="modal-title">送信先を選択（複数選択可）</div>
-        ${itemsHtml}
-        <div class="modal-btn-row">
-          <button class="btn btn-secondary" onclick="closeLineModal()">キャンセル</button>
-          <button id="lineNextBtn" class="btn line-btn btn-disabled" disabled onclick="renderLineConfirmScreen()">次へ</button>
-        </div>
-      `);
-    }
-
-    // トグルのON/OFFに応じて選択中リストを更新し、「次へ」ボタンの活性状態を切り替える
-    function onLineTargetToggle(checkboxEl) {
-      const lineUserId = checkboxEl.dataset.lineUserId;
-      const lineUserName = checkboxEl.dataset.lineUserName;
-
-      if (checkboxEl.checked) {
-        if (!selectedLineUserIds.some(t => t.lineUserId === lineUserId)) {
-          selectedLineUserIds.push({ lineUserId: lineUserId, name: lineUserName });
-        }
-      } else {
-        selectedLineUserIds = selectedLineUserIds.filter(t => t.lineUserId !== lineUserId);
-      }
-
-      const nextBtn = document.getElementById("lineNextBtn");
-      if (nextBtn) {
-        const hasSelection = selectedLineUserIds.length > 0;
-        nextBtn.disabled = !hasSelection;
-        nextBtn.classList.toggle("btn-disabled", !hasSelection);
-      }
-    }
-
-    // 【確認画面】選択した宛先名を一覧表示し、最終確認を取る
-    function renderLineConfirmScreen() {
-      if (selectedLineUserIds.length === 0) return;
-
-      const namesHtml = selectedLineUserIds.map(t => escapeHtml(t.name)).join("、");
-
-      showLineModal(`
-        <div class="modal-title">この内容で送信しますか？</div>
-        <p>${namesHtml} さんに、案件情報をLINEで送信します。</p>
-        <div class="modal-btn-row">
-          <button class="btn btn-secondary" onclick="renderLineTargetSelection.call(null)" id="lineBackBtn">戻る</button>
-          <button class="btn line-btn" onclick="executeLinePush()">送信する</button>
-        </div>
-      `);
-      // 「戻る」は選択画面の再取得が必要なため、直前の選択状態を保ったまま
-      // 選択画面を作り直したいが、targetsを保持していないので再取得する。
-      document.getElementById("lineBackBtn").addEventListener("click", (e) => {
-        e.preventDefault();
-        openLineTargetModal();
-      }, { once: true });
-    }
-
-    // 【送信実行】確認後、実際にLINE Push送信APIを呼ぶ
-    async function executeLinePush() {
-      if (!currentCaseForLine) return;
-
-      showLineModal(`
-        <div class="modal-title">送信しています…</div>
-        <div class="spinner"></div>
-      `);
-
-      try {
-        const response = await fetch("/api/line-push", {
+        await fetch("/api/log-action", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            ...getCurrentAuthInfo(),
-            shareToken: currentCaseForLine.shareToken,
-            title: currentCaseForLine.title,
-            client: currentCaseForLine.client,
-            staff: currentCaseForLine.staff,
-            address: currentCaseForLine.address,
-            workSchedule: currentCaseForLine.workSchedule,
-            attached: currentCaseForLine.attached,
-            mapUrl: currentCaseForLine.mapUrl,
-            targetLineUserIds: selectedLineUserIds.map(t => t.lineUserId)
+            lineUserId: authInfo.lineUserId || "",
+            email: authInfo.email || "",
+            actionName: actionName,
+            caseNo: caseNo || "",
+            detail: detail || ""
           })
         });
-        const resJson = await response.json();
-
-        if (!response.ok || resJson.status !== "success") {
-          throw new Error((resJson && resJson.error) || "送信に失敗しました");
-        }
-
-        renderLineCompleteScreen(resJson.data);
-
       } catch (err) {
-        showLineModal(`
-          <div class="modal-title">送信エラー</div>
-          <div style="color:#d33;">${escapeHtml(err.message)}</div>
-          <div class="modal-btn-row">
-            <button class="btn btn-secondary" onclick="closeLineModal()">閉じる</button>
-          </div>
-        `);
+        // ログ記録の失敗はコンソールに残すのみ。ユーザーには一切表示しない。
+        console.error("❌ 操作ログの記録に失敗しました:", err);
       }
-    }
-
-    // 【完了画面】誰に送信できて、誰に失敗したかを表示する
-    function renderLineCompleteScreen(result) {
-      const succeeded = (result && result.succeeded) || [];
-      const failed = (result && result.failed) || [];
-
-      let html = `<div class="modal-title">送信結果</div>`;
-
-      if (succeeded.length > 0) {
-        html += `<p>✅ ${succeeded.map(escapeHtml).join("、")} さんに送信完了しました。</p>`;
-      }
-      if (failed.length > 0) {
-        const failedDetails = failed.map(f => `${escapeHtml(f.name)}（${escapeHtml(f.message || "理由不明")}）`).join("、");
-        html += `<p style="color:#d33;">⚠️ ${failedDetails} さんへの送信に失敗しました。</p>`;
-      }
-      if (succeeded.length === 0 && failed.length === 0) {
-        html += `<p>送信結果を取得できませんでした。</p>`;
-      }
-
-      html += `
-        <div class="modal-btn-row">
-          <button class="btn line-btn" onclick="closeLineModal()">閉じる</button>
-        </div>
-      `;
-
-      showLineModal(html);
-    }
-
-    function copyText(text) {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "absolute";
-      ta.style.left = "-9999px";
-      document.body.appendChild(ta);
-      ta.select();
-      ta.setSelectionRange(0, 99999);
-      document.execCommand("copy");
-      document.body.removeChild(ta);
     }
 
     function renderCase(data) {
@@ -617,29 +337,19 @@
       });
       if (!workHtml) workHtml = "<div>予定なし</div>";
 
-      // 【重要】LINE等に送る共有URLは /api/share（OGPタグ付きの中継ページ）を指す。
-      // /api/share が vercel.json のrewriteで "/" にも紐づいているため、
-      // 人間がこのURLを直接開いた場合も自動的にこのページ（token付き）へ遷移する。
-      const shareUrl = `${window.location.origin}/api/share?token=${encodeURIComponent(data.token)}`;
-
-      const shareMessage = `${shareUrl}`;
-
-      // 【LINE Push送信用】このモーダルは renderCase の外（グローバル変数）からも
-      // 参照するため、案件情報をここで保持しておく。
+      // 【操作ログ用】案件情報の保持。currentCaseForLineはlogShareAppAction
+      // から「どの案件での操作か」を判定するために使う（共有機能は
+      // share.html側に移ったため、ここではログ用の保持のみ）。
       currentCaseForLine = {
         shareToken: data.token,
-        title: title,
-        client: client,
-        staff: staff,
-        address: address,
-        workSchedule: workSchedule,
-        attached: attached,
-        mapUrl: (mapUrl && mapUrl !== "#") ? mapUrl : ""
+        caseNo: data.caseNo || ""
       };
 
-      // email（Googleログイン）でもlineUserId（LINE内蔵ブラウザ）でも
-      // 送信機能を使えるようになったため、ボタンは常に表示する。
-      const linePushButtonHtml = `<button id="linePushBtn" class="btn line-btn">📩 LINEで送る</button>`;
+      // 【共有機能について】案件詳細ページ（index.html）には共有ボタンを
+      // 置かない方針に変更した。共有の入口は「メインアプリの共有ボタン」
+      // 「カレンダーの共有リンク」の2つに絞り、いずれも新設の
+      // share.html（共有方法選択ページ）を経由する。このページ自体は
+      // 「閲覧・認証」に専念する。
 
       const html = `
         <div class="card">
@@ -664,10 +374,6 @@
 
           <p><a href="${mapUrl}" class="map-link" target="_blank" rel="noopener">📍 Googleマップを開く</a></p>
         </div>
-
-        ${linePushButtonHtml}
-        <button id="msgBtn" class="btn fb-btn">💬 Messengerで案件URLを送る</button>
-        <button id="copyBtn" class="btn copy-btn">🔗 案件URLをコピー</button>
       `;
 
       const app = document.getElementById("app");
@@ -676,17 +382,8 @@
       document.getElementById("stateBox").style.display = "none";
       document.title = title;
 
-      const linePushBtnEl = document.getElementById("linePushBtn");
-      if (linePushBtnEl) linePushBtnEl.addEventListener("click", openLineTargetModal);
-      document.getElementById("msgBtn").addEventListener("click", () => {
-        copyText(shareMessage);
-        alert("案件URLをコピーしました。Messengerに貼り付けてください。");
-        window.open("https://m.me/", "_blank");
-      });
-      document.getElementById("copyBtn").addEventListener("click", () => {
-        copyText(shareUrl);
-        alert("案件URLをコピーしました。");
-      });
+      // 【操作ログ】案件詳細の表示が完了した時点で「案件ページ開封」を記録する
+      logShareAppAction("案件ページ開封");
     }
 
     // -------------------------------------------------------------
@@ -754,6 +451,21 @@
         .then(data => {
           if (data.error) {
             // 認証エラー（このアカウントではアクセスできません 等）はここに到達する。
+            // 【操作ログ】認証失敗も記録する。まだ案件情報（caseNo）を
+            // 取得できていない段階のため、token（共有トークン）を
+            // detailに含めることで、後から案件を特定できるようにする。
+            // ログ送信自体の失敗はユーザーに影響させないため、awaitはしない。
+            fetch("/api/log-action", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                lineUserId: authInfo.lineUserId || "",
+                email: authInfo.email || "",
+                actionName: "認証失敗",
+                detail: `token=${token} / ${data.error}`
+              })
+            }).catch(err => console.error("❌ 操作ログの記録に失敗しました:", err));
+
             showAuthErrorState(data.error, authInfo);
             return;
           }
@@ -761,8 +473,6 @@
             currentUserEmail = authInfo.email;
           } else if (authInfo.lineUserId) {
             currentUserLineUserId = authInfo.lineUserId;
-          } else if (authInfo.viewKey) {
-            currentUserViewKey = authInfo.viewKey;
           }
           renderCase(data);
         })
@@ -785,7 +495,7 @@
     //   トークンが取得できないことがある）。
     // -------------------------------------------------------------
     function initLiffAndLoadCase() {
-      liff.init({ liffId: "2011463016-0MGVvN6M" })
+      liff.init({ liffId: CONFIG.LIFF_ID })
         .then(() => {
           const token = getQueryParam("token");
           if (!token) {
@@ -837,8 +547,7 @@
       }
 
       google.accounts.id.initialize({
-        client_id: "302132186875-fr0lh20940o7k9jrdg3drm4n5r19lm99.apps.googleusercontent.com",
-           
+        client_id: "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
         callback: (credentialResponse) => {
           const payload = decodeJwtPayload(credentialResponse.credential);
           showState("ログインを確認しています…", false);
@@ -872,24 +581,6 @@
       // ページ読み込み直後の時点ではクエリパラメータがまだ正しく
       // 反映されていないことがある（liff.init()完了後であれば確実に
       // 最終的なURLになっている）。
-      //
-      // 【viewKeyについて】
-      // メインアプリの「共有」ボタン経由で開かれた場合、URLに
-      // viewKey（閲覧用一時トークン）が付与されている。この場合は
-      // Google/LINEログインを一切行わず、最優先でこれを使って認証する
-      // （メインアプリ側で既にログイン済みであることが保証されているため）。
-      // viewKeyはリダイレクトを挟まない通常のURLパラメータなので、
-      // LIFFのように init() 完了を待つ必要はなく、ここで直接判定できる。
-      const viewKey = getQueryParam("viewKey");
-      if (viewKey) {
-        const token = getQueryParam("token");
-        if (!token) {
-          showState("URLに共有トークン（?token=...）が指定されていません", true);
-          return;
-        }
-        verifyAndLoadCase(token, { viewKey: viewKey });
-        return;
-      }
 
       window.onload = function () {
         // 【重要】liff SDK自体が読み込まれているか（=User-Agent判定で
