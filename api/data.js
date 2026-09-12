@@ -30,6 +30,16 @@
 // ②MAIN_APP_GAS_URL（メインアプリGAS）…認証チェックのみ行う。
 // 案件データ本体の取得ロジック（トークン照合）は既存の案件共有GAS側にしか
 // 無いため、ここでは変更せずそのまま使う。認証だけメインアプリGAS側に問い合わせる。
+//
+// 【速度改善：認証チェックとデータ取得の並列化】
+// 以前は「①認証チェック（メインアプリGAS）→ 完了を待ってから
+// ②案件データ取得（案件共有GAS）」という直列処理だったため、
+// 2つのGAS呼び出し時間の合計がそのまま待ち時間になっていた。
+// 認証に失敗した場合にデータをブラウザへ返さない、というセキュリティ
+// 上の要件は変えずに、"呼び出し自体"は両方同時に開始することで、
+// 待ち時間を「2つの合計」から「遅い方の1つ分」に短縮する
+// （Promise.allで両方の完了を待ってから、まず認証結果を確認し、
+//   成功していた場合のみデータ取得の結果をブラウザへ返す）。
 // =====================================================================
 
 export default async function handler(req, res) {
@@ -55,24 +65,35 @@ export default async function handler(req, res) {
   }
 
   try {
-    // -------------------------------------------------------------
-    // ①まず認証チェック（メインアプリGASへ）
-    // email があれば通常のGoogleログイン照合、無ければLINEuserIdでの
-    // 照合を行う。ここで失敗した場合は、案件共有GASへの問い合わせ自体を
-    // 行わない（＝未認証のユーザーに案件データが渡る隙を作らない）。
-    // -------------------------------------------------------------
     const authAction = email ? "verifyShareUser" : "verifyShareUserByLineId";
     const authPayload = email ? { email: email } : { lineUserId: lineUserId };
 
-    const authRes = await fetch(MAIN_APP_GAS_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain" },
-      body: JSON.stringify({
-        action: authAction,
-        payload: authPayload
+    // -------------------------------------------------------------
+    // 【並列実行】認証チェック（メインアプリGAS）と、案件データ取得
+    // （案件共有GAS）の2つのリクエストを同時に投げる。
+    // 案件データ取得は「その案件が実在するか・トークンが正しいか」の
+    // 検証でしかなく、この時点ではまだ個人情報等はブラウザに返して
+    // いないため、認証結果を待たずに並列で取得を開始しても安全。
+    // 実際にデータをブラウザへ返すかどうかは、この後の認証結果
+    // チェックで判定する（＝未認証のユーザーにデータが渡る隙は無い）。
+    // -------------------------------------------------------------
+    const [authRes, gasRes] = await Promise.all([
+      fetch(MAIN_APP_GAS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({
+          action: authAction,
+          payload: authPayload
+        })
+      }),
+      fetch(`${GAS_URL}?token=${encodeURIComponent(token)}`, {
+        redirect: "follow"
       })
-    });
+    ]);
 
+    // -------------------------------------------------------------
+    // ①まず認証結果を確認する
+    // -------------------------------------------------------------
     const authResponseText = await authRes.text();
     let authData;
     try {
@@ -86,16 +107,13 @@ export default async function handler(req, res) {
 
     if (authData.status !== "success") {
       // このアカウントではアクセスできません、等のエラーメッセージをそのまま返す
+      // （案件データ取得の結果は、認証失敗の場合は一切使わず捨てる）
       return res.status(403).json({ error: authData.message || "このアカウントではアクセスできません" });
     }
 
     // -------------------------------------------------------------
-    // ②認証成功後、案件共有GASへ案件データを問い合わせる
+    // ②認証成功が確認できたので、並列取得しておいた案件データを返す
     // -------------------------------------------------------------
-    const gasRes = await fetch(`${GAS_URL}?token=${encodeURIComponent(token)}`, {
-      redirect: "follow"
-    });
-
     const responseText = await gasRes.text();
 
     try {
