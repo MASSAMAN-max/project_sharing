@@ -84,6 +84,10 @@
         : `<div>${message}</div>`;
     }
 
+    function escapeHtml(str) {
+      return String(str == null ? "" : str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
     function copyText(text) {
       const ta = document.createElement("textarea");
       ta.value = text;
@@ -96,7 +100,51 @@
       document.body.removeChild(ta);
     }
 
-    (function init() {
+    // 【新規】案件の要約情報（タイトル・発注元・担当者・住所）を取得する。
+    // このページは元々GAS通信を一切行わない設計だったが、LINE共有時に
+    // 「案件共有」という固定文言ではなく実際の案件情報を表示したい、
+    // という要望に対応するため追加した。
+    // 失敗しても致命的ではない（リンクだけのシンプルな文言にフォール
+    // バックする）ため、エラーは投げずnullを返すだけにしている。
+    async function fetchShareSummary(token) {
+      try {
+        const response = await fetch(`/api/share-info?token=${encodeURIComponent(token)}`);
+        if (!response.ok) return null;
+        const data = await response.json();
+        if (data.error) return null;
+        return data;
+      } catch (err) {
+        console.error("❌ 案件要約情報の取得に失敗しました:", err);
+        return null;
+      }
+    }
+
+    // LINE共有文言を組み立てる。summaryが取得できていれば案件名・発注元・
+    // 担当者・住所を含む文章に、取得できなければURLのみのシンプルな
+    // 文言にフォールバックする。
+    function buildShareText(summary, liffUrl) {
+      if (!summary) {
+        return liffUrl;
+      }
+
+      let clientLine = summary.client || "--";
+      if (summary.staff && summary.staff !== "--" && summary.staff !== "") {
+        clientLine += `（${summary.staff} 様）`;
+      }
+
+      const lines = [
+        `【案件共有】${summary.title || "案件詳細"}`,
+        clientLine,
+        summary.address || "",
+        "",
+        liffUrl
+      ];
+
+      // 住所等が空文字の行は詰めて、不要な空行を作らない
+      return lines.filter((line, idx) => line !== "" || idx === lines.length - 1).join("\n");
+    }
+
+    (async function init() {
       const token = getQueryParam("token");
       if (!token) {
         showState("URLに共有トークン（?token=...）が指定されていません", true);
@@ -104,12 +152,14 @@
       }
 
       // -------------------------------------------------------------
-      // 【設計方針】このページはGAS通信を一切行わない、軽量な選択画面。
-      // 「誰が」「どの案件を」共有しようとしているかの認証・特定は
-      // 一切せず、URLに含まれるtokenをそのまま各リンク生成に使い回す。
+      // 【設計方針】このページの基本方針は「軽量な選択画面」だが、
+      // LINE共有時に案件名等を表示したいという要望に対応するため、
+      // 案件の要約情報（タイトル・発注元・担当者・住所）だけを取得する
+      // 軽量なAPI（/api/share-info、認証不要）への通信を1回だけ行う。
+      // 「誰が」共有しようとしているかの認証は行わない。
       // 実際の認証（本人確認）は、リンク先の index.html 側で行われる。
       //
-      // ・LINE送信　　　　→ LIFF URLをLINEの共有画面に渡す
+      // ・LINE送信　　　　→ 案件名等を含む文章＋LIFF URLをLINEの共有画面に渡す
       //     （相手がLIFF経由で開くことで、開いた本人のLINEuserIdを
       //      自動取得できるようにするため）
       // ・Messenger送信　→ /api/share（OGP付き中継ページ）のURLを渡す
@@ -117,11 +167,15 @@
       // -------------------------------------------------------------
       const shareUrl = `${window.location.origin}/api/share?token=${encodeURIComponent(token)}`;
       const liffUrl = `https://liff.line.me/${CONFIG.LIFF_ID}?token=${encodeURIComponent(token)}`;
-      const lineShareUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(liffUrl);
+
+      const summary = await fetchShareSummary(token);
+      const shareText = buildShareText(summary, liffUrl);
+      const lineShareUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(shareText);
 
       const html = `
         <div class="card">
           <h2>送信方法を選択してください</h2>
+          ${summary ? `<p style="text-align:left; color:#555; font-size:13px;">${escapeHtml(summary.title)}</p>` : ""}
           <a href="${lineShareUrl}" class="btn line-btn" target="_blank" rel="noopener">📩 LINEで送る</a>
           <button id="msgBtn" class="btn fb-btn">💬 Messengerで送る</button>
           <button id="copyBtn" class="btn copy-btn">🔗 URLをコピー</button>
