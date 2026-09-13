@@ -133,9 +133,11 @@
       }
 
       const lines = [
-        `【案件共有】${summary.title || "案件詳細"}`,
+        `【案件共有】`,
+        `${summary.title || "案件詳細"}`,
         clientLine,
         summary.address || "",
+        "",
         "",
         liffUrl
       ];
