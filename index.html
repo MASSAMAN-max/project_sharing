@@ -182,14 +182,36 @@
       return String(str == null ? "" : str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
+    // 【体感速度改善】読み込みが長引いた場合に、後から補足メッセージを
+    // 追加表示するためのタイマーID。showStateが呼ばれるたびにリセットする
+    // （前の画面のタイマーが誤って今の画面に反映されるのを防ぐため）。
+    let stateLongWaitTimerId = null;
+
     function showState(message, isError) {
+      // 前回のタイマーが残っていれば必ず解除する
+      if (stateLongWaitTimerId) {
+        clearTimeout(stateLongWaitTimerId);
+        stateLongWaitTimerId = null;
+      }
+
       const box = document.getElementById("stateBox");
       box.style.display = "block";
       document.getElementById("loginBox").style.display = "none";
       document.getElementById("app").style.display = "none";
       box.innerHTML = isError
         ? `<div style="color:#d33; font-weight:bold;">⚠️ ${escapeHtml(message)}</div>`
-        : `<div class="spinner"></div><div>${escapeHtml(message)}</div>`;
+        : `<div class="spinner"></div><div>${escapeHtml(message)}</div><div id="stateLongWaitNote" style="margin-top:10px; font-size:12px; color:#999;"></div>`;
+
+      // 【体感速度改善】エラー表示の場合はタイマーを起動しない
+      // （読み込み中の表示のときだけ、長引いた場合の補足を出す）
+      if (!isError) {
+        stateLongWaitTimerId = setTimeout(() => {
+          const note = document.getElementById("stateLongWaitNote");
+          if (note) {
+            note.textContent = "通信状況によっては時間がかかる場合があります…";
+          }
+        }, 5000);
+      }
     }
 
     // -------------------------------------------------------------
@@ -219,7 +241,10 @@
     async function fetchCaseData(token, authInfo) {
       const url = `/api/data`;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      // 【体感速度改善に伴う調整】LINE内蔵ブラウザ経由でのアクセス時、
+      // LIFF初期化やGASとの通信が重なり15秒では間に合わずタイムアウトする
+      // ケースが実際に発生したため、30秒に延長した。
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
 
       try {
         const response = await fetch(url, {
@@ -254,7 +279,7 @@
         clearTimeout(timeoutId);
 
         if (err.name === "AbortError") {
-          throw new Error("データの取得がタイムアウトしました");
+          throw new Error("通信に時間がかかっています。電波の良い場所で、もう一度お試しください。");
         }
 
         throw new Error(err.message || "データの取得に失敗しました（通信エラー）");
@@ -495,6 +520,13 @@
     //   トークンが取得できないことがある）。
     // -------------------------------------------------------------
     function initLiffAndLoadCase() {
+      // 【体感速度改善】LIFFの初期化はLINEサーバーとの通信を伴うため、
+      // 数秒かかることがある。「何もない画面」の時間を減らすため、
+      // 最初に「LINEと連携しています…」という具体的なメッセージを出す
+      // （initはこの直後に始まるが、呼び出し前に一度描画を反映させたい
+      //   ため、先にshowStateしてからliff.init()を呼ぶ）。
+      showState("LINEと連携しています…", false);
+
       liff.init({ liffId: CONFIG.LIFF_ID })
         .then(() => {
           const token = getQueryParam("token");
@@ -516,6 +548,7 @@
             return;
           }
           return liff.getProfile().then(profile => {
+            showState("ログインを確認しています…", false);
             verifyAndLoadCase(token, { lineUserId: profile.userId });
           });
         })
