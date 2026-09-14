@@ -167,7 +167,7 @@
 
   <!-- 未ログイン時に表示するログイン画面 -->
   <div id="loginBox" style="display:none;">
-    <div class="login-desc">上のリンクをタップして開く</div>
+    <div class="login-desc">この案件情報を見るには、登録済みのGoogleアカウントでログインしてください。</div>
     <div id="googleSignInButton"></div>
   </div>
 
@@ -474,26 +474,6 @@
 
       fetchCaseData(token, authInfo)
         .then(data => {
-          if (data.error) {
-            // 認証エラー（このアカウントではアクセスできません 等）はここに到達する。
-            // 【操作ログ】認証失敗も記録する。まだ案件情報（caseNo）を
-            // 取得できていない段階のため、token（共有トークン）を
-            // detailに含めることで、後から案件を特定できるようにする。
-            // ログ送信自体の失敗はユーザーに影響させないため、awaitはしない。
-            fetch("/api/log-action", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                lineUserId: authInfo.lineUserId || "",
-                email: authInfo.email || "",
-                actionName: "認証失敗",
-                detail: `token=${token} / ${data.error}`
-              })
-            }).catch(err => console.error("❌ 操作ログの記録に失敗しました:", err));
-
-            showAuthErrorState(data.error, authInfo);
-            return;
-          }
           if (authInfo.email) {
             currentUserEmail = authInfo.email;
           } else if (authInfo.lineUserId) {
@@ -502,7 +482,27 @@
           renderCase(data);
         })
         .catch(err => {
-          showState(err.message || "データの取得に失敗しました", true);
+          // 【重要】/api/data は認証エラー時にHTTP 403を返すため、
+          // fetchCaseData内でエラーがthrowされ、このcatchに到達する
+          // （以前は.then内でdata.errorを見る想定だったが、実際には
+          //   到達しない経路だったため、ここに認証失敗ログを移した）。
+          //
+          // 【操作ログ】認証失敗を記録する。まだ案件情報（caseNo）を
+          // 取得できていない段階のため、token（共有トークン）を
+          // detailに含めることで、後から案件を特定できるようにする。
+          // ログ送信自体の失敗はユーザーに影響させないため、awaitはしない。
+          fetch("/api/log-action", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              lineUserId: authInfo.lineUserId || "",
+              email: authInfo.email || "",
+              actionName: "認証失敗",
+              detail: `token=${token} / ${err.message}`
+            })
+          }).catch(logErr => console.error("❌ 操作ログの記録に失敗しました:", logErr));
+
+          showAuthErrorState(err.message || "データの取得に失敗しました", authInfo);
         });
     }
 
