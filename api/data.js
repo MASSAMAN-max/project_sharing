@@ -118,6 +118,11 @@ export default async function handler(req, res) {
 
     try {
       const data = JSON.parse(responseText);
+      // 【新規】ホワイトリストに登録された正式なユーザー名をレスポンスに
+      // 含める。LINE経由の場合、LINEプロフィールAPIは相手が公式アカウントを
+      // 友だち追加していないと表示名を取得できない制約があるため、
+      // 操作ログ記録時はこちら（ホワイトリストの名前）を優先して使う。
+      data.verifiedUserName = authData.data && authData.data.userName ? authData.data.userName : "";
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       return res.status(200).json(data);
     } catch (parseError) {
