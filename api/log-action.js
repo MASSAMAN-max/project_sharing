@@ -20,7 +20,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "このAPIはPOSTメソッドのみ受け付けます" });
   }
 
-  const { lineUserId, email, actionName, caseNo, detail } = req.body || {};
+  const { lineUserId, email, verifiedUserName, actionName, caseNo, detail } = req.body || {};
   const GAS_URL = process.env.GAS_URL;
 
   if (!actionName) {
@@ -41,6 +41,7 @@ export default async function handler(req, res) {
         action: "logAction",
         lineUserId: lineUserId || "",
         email: email || "",
+        verifiedUserName: verifiedUserName || "",
         actionName: actionName,
         caseNo: caseNo || "",
         detail: detail || ""
