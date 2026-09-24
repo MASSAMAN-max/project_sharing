@@ -170,7 +170,7 @@
 
       const summary = await fetchShareSummary(token);
       const shareText = buildShareText(summary, liffUrl);
-      const lineShareUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(shareText);
+      const lineShareUrl = "https://line.me/R/msg/text/?"// + encodeURIComponent(shareText);
 
       const html = `
         <div class="card">
