@@ -224,6 +224,10 @@
     // -------------------------------------------------------------
     let currentUserEmail = null;
     let currentUserLineUserId = null;
+    // ホワイトリストに登録された正式なユーザー名（/api/data が認証成功時に返す）。
+    // 操作ログに「友だち未追加のLINEユーザーでも名前が空欄にならない」よう、
+    // ログ送信時に一緒に送る。
+    let currentVerifiedUserName = null;
 
     function showLoginScreen() {
       document.getElementById("stateBox").style.display = "none";
@@ -322,6 +326,7 @@
           body: JSON.stringify({
             lineUserId: authInfo.lineUserId || "",
             email: authInfo.email || "",
+            verifiedUserName: currentVerifiedUserName || "",
             actionName: actionName,
             caseNo: caseNo || "",
             detail: detail || ""
@@ -479,6 +484,9 @@
           } else if (authInfo.lineUserId) {
             currentUserLineUserId = authInfo.lineUserId;
           }
+          // 【重要】renderCase内で「案件ページ開封」ログが送られるため、
+          // 必ずrenderCaseより前に正式名をセットしておくこと。
+          currentVerifiedUserName = data.verifiedUserName || null;
           renderCase(data);
         })
         .catch(err => {
