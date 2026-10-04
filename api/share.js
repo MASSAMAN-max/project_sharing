@@ -45,6 +45,9 @@ export default async function handler(req, res) {
   try {
     const gasApiUrl = new URL(GAS_URL);
     gasApiUrl.searchParams.set('token', token);
+    // 軽量な要約API（タイトル・発注元・担当者・住所のみ）を使う。
+    // 指定しないと案件詳細（連絡先等を含む buildCaseData）が呼ばれてしまう。
+    gasApiUrl.searchParams.set('action', 'summary');
 
     const gasRes = await fetch(gasApiUrl.toString());
     if (gasRes.ok) {
