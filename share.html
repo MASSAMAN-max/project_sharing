@@ -122,26 +122,29 @@
     // LINE共有文言を組み立てる。summaryが取得できていれば案件名・発注元・
     // 担当者・住所を含む文章に、取得できなければURLのみのシンプルな
     // 文言にフォールバックする。
+    // GAS側は未入力の項目を "--" で返すため、"--" と空文字は「値なし」
+    // として扱い、LINEの本文には載せない（"--" がそのまま送られるのを防ぐ）。
     function buildShareText(summary, liffUrl) {
       if (!summary) {
         return liffUrl;
       }
 
-      let clientLine = summary.client || "--";
-      if (summary.staff && summary.staff !== "--" && summary.staff !== "") {
-        clientLine += `（${summary.staff} 様）`;
+      const hasValue = (v) => v && v !== "--";
+
+      const lines = [summary.title || "案件詳細"];
+
+      if (hasValue(summary.client)) {
+        lines.push(hasValue(summary.staff)
+          ? `${summary.client}（${summary.staff} 様）`
+          : summary.client);
+      }
+      if (hasValue(summary.address)) {
+        lines.push(summary.address);
       }
 
-      const lines = [
-        `${summary.title || "案件詳細"}`,
-        clientLine,
-        summary.address || "",
-        "",
-        liffUrl
-      ];
-
-      // 住所等が空文字の行は詰めて、不要な空行を作らない
-      return lines.filter((line, idx) => line !== "" || idx === lines.length - 1).join("\n");
+      // 案件情報とURLの間に空行を1つ入れる
+      lines.push("", liffUrl);
+      return lines.join("\n");
     }
 
     (async function init() {
