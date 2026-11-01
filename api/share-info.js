@@ -16,19 +16,21 @@
 export default async function handler(req, res) {
   const { token } = req.query;
   const GAS_URL = process.env.GAS_URL;
+  // 案件共有GASが「Vercel経由の呼び出し」か確認するための共有シークレット
+  const SHARE_API_SECRET = process.env.SHARE_API_SECRET;
 
   if (!token) {
     return res.status(400).json({ error: "共有トークンが指定されていません" });
   }
 
-  if (!GAS_URL) {
+  if (!GAS_URL || !SHARE_API_SECRET) {
     return res.status(500).json({
-      error: "サーバー設定エラー: Vercel環境変数『GAS_URL』が読み込めていません。Redeployを実行してください。"
+      error: "サーバー設定エラー: Vercel環境変数『GAS_URL』または『SHARE_API_SECRET』が読み込めていません。Redeployを実行してください。"
     });
   }
 
   try {
-    const gasRes = await fetch(`${GAS_URL}?token=${encodeURIComponent(token)}&action=summary`, {
+    const gasRes = await fetch(`${GAS_URL}?token=${encodeURIComponent(token)}&action=summary&secret=${encodeURIComponent(SHARE_API_SECRET)}`, {
       redirect: "follow"
     });
 
