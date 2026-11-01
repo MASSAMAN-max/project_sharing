@@ -5,25 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- 環境依存パラメータ（LIFF_ID等）はメイン処理より前に読み込む -->
 <script src="config.js"></script>
+<!-- 共通スタイル（index.html・share.html で共有）。ページ固有の指定は、下のstyleタグに書く -->
+<link rel="stylesheet" href="common.css">
 
 <title>案件共有 - 送信方法を選択</title>
 <style>
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    padding: 15px;
-    font-size: 14px;
-    color: #333;
-    background: #f4f4f4;
-    margin: 0;
-  }
-
+  /* body・.card（共通部分）・.btn・.line-btn・#stateBox は common.css に置いている */
   .card {
-    border: 1px solid #ddd;
-    border-radius: 10px;
     padding: 20px;
-    background: #fff;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    max-width: 480px;
     margin: 60px auto 20px auto;
     text-align: center;
   }
@@ -34,32 +23,11 @@
     color: #000;
   }
 
-  .btn {
-    display: block;
-    width: 100%;
-    box-sizing: border-box;
-    text-align: center;
-    padding: 15px 0;
-    color: white;
-    text-decoration: none;
-    border-radius: 8px;
-    font-weight: bold;
-    font-size: 16px;
-    margin: 10px auto 0 auto;
-    border: none;
-    cursor: pointer;
-  }
-
-  .line-btn { background: #06c755; }
   .fb-btn { background: #0084ff; }
   .copy-btn { background: #666; }
 
-  #stateBox {
-    max-width: 480px;
-    margin: 40px auto;
-    text-align: center;
-    color: #666;
-  }
+  /* LINEボタンの「準備中」表示（要約情報の取得が終わるまで押せない） */
+  .btn.is-disabled { opacity: 0.5; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -84,10 +52,6 @@
         : `<div>${message}</div>`;
     }
 
-    function escapeHtml(str) {
-      return String(str == null ? "" : str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    }
-
     function copyText(text) {
       const ta = document.createElement("textarea");
       ta.value = text;
@@ -100,15 +64,22 @@
       document.body.removeChild(ta);
     }
 
-    // 【新規】案件の要約情報（タイトル・発注元・担当者・住所）を取得する。
+    // 案件の要約情報（タイトル・発注元・担当者・住所）を取得する。
     // このページは元々GAS通信を一切行わない設計だったが、LINE共有時に
     // 「案件共有」という固定文言ではなく実際の案件情報を表示したい、
     // という要望に対応するため追加した。
     // 失敗しても致命的ではない（リンクだけのシンプルな文言にフォール
     // バックする）ため、エラーは投げずnullを返すだけにしている。
+    // GASが応答しない場合でもLINEボタンが「準備中」のまま止まらないよう、
+    // 8秒でタイムアウトして失敗扱い（null）にする。
     async function fetchShareSummary(token) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
       try {
-        const response = await fetch(`/api/share-info?token=${encodeURIComponent(token)}`);
+        const response = await fetch(`/api/share-info?token=${encodeURIComponent(token)}`, {
+          signal: controller.signal
+        });
         if (!response.ok) return null;
         const data = await response.json();
         if (data.error) return null;
@@ -116,6 +87,8 @@
       } catch (err) {
         console.error("❌ 案件要約情報の取得に失敗しました:", err);
         return null;
+      } finally {
+        clearTimeout(timeoutId);
       }
     }
 
@@ -171,15 +144,16 @@
       const shareUrl = `${window.location.origin}/api/share?token=${encodeURIComponent(token)}`;
       const liffUrl = `https://liff.line.me/${CONFIG.LIFF_ID}?token=${encodeURIComponent(token)}`;
 
-      const summary = await fetchShareSummary(token);
-      const shareText = buildShareText(summary, liffUrl);
-      const lineShareUrl = "https://line.me/R/share?text=" + encodeURIComponent(shareText);
-
+      // 【速度改善】案件の要約情報の取得（GASへの問い合わせ）を待たずに、先に画面を表示する。
+      // Messenger・URLコピーは要約情報が不要なので、すぐに使える。
+      // LINE送信だけは、案件名等を含む文言を作るために要約情報が必要なので、
+      // 取得できるまで「準備中」の表示にしておき、取得後に有効化する
+      // （取得に失敗した場合は、URLのみの文言で有効化する）。
       const html = `
         <div class="card">
           <h2>送信方法を選択してください</h2>
-          ${summary ? `<p style="text-align:left; color:#555; font-size:13px;">${escapeHtml(summary.title)}</p>` : ""}
-          <a href="${lineShareUrl}" class="btn line-btn" target="_blank" rel="noopener">📩 LINEで送る</a>
+          <p id="summaryTitle" hidden style="text-align:left; color:#555; font-size:13px;"></p>
+          <a id="lineBtn" class="btn line-btn is-disabled" role="button" aria-disabled="true">📩 LINEで送る（準備中…）</a>
           <button id="msgBtn" class="btn fb-btn">💬 Messengerで送る</button>
           <button id="copyBtn" class="btn copy-btn">🔗 URLをコピー</button>
         </div>
@@ -198,6 +172,24 @@
       document.getElementById("copyBtn").addEventListener("click", () => {
         copyText(shareUrl);
         alert("案件URLをコピーしました。");
+      });
+
+      // 要約情報が取得できたら、案件名を表示し、LINEボタンを有効化する
+      fetchShareSummary(token).then(summary => {
+        if (summary) {
+          const titleElement = document.getElementById("summaryTitle");
+          titleElement.textContent = summary.title || "";
+          titleElement.hidden = false;
+        }
+
+        const shareText = buildShareText(summary, liffUrl);
+        const lineButton = document.getElementById("lineBtn");
+        lineButton.href = "https://line.me/R/share?text=" + encodeURIComponent(shareText);
+        lineButton.target = "_blank";
+        lineButton.rel = "noopener";
+        lineButton.textContent = "📩 LINEで送る";
+        lineButton.classList.remove("is-disabled");
+        lineButton.removeAttribute("aria-disabled");
       });
     })();
   </script>
