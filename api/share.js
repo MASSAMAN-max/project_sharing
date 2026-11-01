@@ -15,7 +15,6 @@ const BOT_USER_AGENTS = [
 ];
 
 export default async function handler(req, res) {
-  const host = req.headers.host || 'localhost';
   const token = req.query ? req.query.token : '';
 
   if (!token) {
@@ -24,13 +23,16 @@ export default async function handler(req, res) {
 
   const userAgent = (req.headers['user-agent'] || '').toLowerCase();
   const isBot = BOT_USER_AGENTS.some(bot => userAgent.includes(bot));
-  const targetUrl = `https://${host}/index.html?token=${encodeURIComponent(token)}`;
+  // 転送先は同じサイト内の案件ページ。相対パスで指定するため、リクエストの
+  // Hostヘッダーを使う必要がない（以前はHostをJavaScriptの文字列に埋め込んでいた）。
+  const targetPath = `/index.html?token=${encodeURIComponent(token)}`;
 
-  // 【1】一般ユーザー（ブラウザ）：GASを待たずに即時転送
+  // 【1】一般ユーザー（ブラウザ）：GASを待たずに即時転送（HTTP 302）。
+  // 以前は「JavaScriptで転送するHTML」を返していたが、ブラウザがHTMLを
+  // 読み込んでJavaScriptを実行する分だけ遅く、302ならサーバーの応答だけで転送が完了する。
   if (!isBot) {
-    const html = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>案件共有</title></head><body><script>window.location.href="${targetUrl}";</script></body></html>`;
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    return res.status(200).send(html);
+    res.setHeader('Location', targetPath);
+    return res.status(302).end();
   }
 
   // 【2】SNSボット（LINE等）：GASからOGPを取得
