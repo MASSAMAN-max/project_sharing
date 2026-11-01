@@ -34,12 +34,28 @@
 // ①GAS_URL（案件共有GAS）        …トークンから案件データ本体を取得する。
 // ②MAIN_APP_GAS_URL（メインアプリGAS）…ホワイトリスト照合のみ行う。
 //
+// 【操作ログ（サーバー側で記録）】
+// 「案件ページ開封」「認証失敗」「案件未発見」は、本人確認の結果が確定する
+// このAPIの中から、案件共有GASの操作ログシートへ記録する。
+// 以前はブラウザから /api/log-action へ送っていたが、ブラウザが送る内容
+// （誰が・どの案件か）は偽装できてしまうため、サーバー側記録に移した。
+//   ・記録するユーザー名・メール・LINEuserIdは、すべてサーバーが検証して
+//     確定した値（ブラウザの申告値は使わない）。
+//   ・IDトークンの検証に失敗したリクエスト（偽造・期限切れ・でたらめな値）は
+//     ログに記録しない。誰でも送れるため、記録するとログシートを
+//     埋められてしまうから。記録するのは、GoogleまたはLINEに実在する
+//     アカウントだと確認できた後の結果だけ。
+//   ・記録はwaitUntilで応答後に行うため、ページの表示を遅らせない。
+//     記録に失敗しても、ページの表示には影響しない（コンソールにだけ出す）。
+//
 // 【速度改善：待ち時間の重なりを最大化している】
 // 「案件データ取得（案件共有GAS）」は本人確認の結果に依存しないため、
 // 最初に開始しておき、本人確認（IDトークン検証 → ホワイトリスト照合）と
 // 並行して進める。ただし、案件データをブラウザへ返すのは、本人確認が
 // すべて成功した後だけ（未認証のユーザーにデータが渡る隙は無い）。
 // =====================================================================
+
+import { waitUntil } from "@vercel/functions";
 
 const GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo";
 const LINE_VERIFY_URL = "https://api.line.me/oauth2/v2.1/verify";
@@ -118,6 +134,29 @@ async function verifyLineIdToken(idToken, expectedChannelId) {
   }
 
   return String(info.sub);
+}
+
+// -------------------------------------------------------------
+// 操作ログを案件共有GAS（操作ログシート）へ記録する。
+// fields：{ email, lineUserId, verifiedUserName, actionName, caseNo, detail }
+//   ※ email / lineUserId / verifiedUserName は、サーバーが検証して確定した値だけを渡すこと。
+// 応答を待たせないよう、記録の完了は waitUntil に任せる。
+// -------------------------------------------------------------
+function writeAccessLog(gasUrl, secret, fields) {
+  const logPromise = fetch(gasUrl, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify({ action: "logAction", secret: secret, ...fields })
+  })
+    .then(response => response.json())
+    .then(result => {
+      if (result.status !== "success") {
+        console.error("❌ 操作ログの記録に失敗しました:", result.message);
+      }
+    })
+    .catch(err => console.error("❌ 操作ログの記録に失敗しました:", err));
+
+  waitUntil(logPromise);
 }
 
 export default async function handler(req, res) {
@@ -199,35 +238,70 @@ export default async function handler(req, res) {
       });
     }
 
+    // 操作ログに記録する「誰が」。IDトークン検証で確定した値だけを使う
+    const verifiedIdentity = { email: verifiedEmail, lineUserId: verifiedLineUserId };
+
     if (authData.status !== "success") {
-      // このアカウントではアクセスできません、等のエラーメッセージをそのまま返す
-      // （案件データ取得の結果は、認証失敗の場合は一切使わず捨てる）
-      return res.status(403).json({ error: authData.message || "このアカウントではアクセスできません" });
+      // 実在するGoogle/LINEアカウントだが、ホワイトリストに無い（または権限が無効）。
+      // 誰が・どの案件で拒否されたかを記録する。
+      const failMessage = authData.message || "このアカウントではアクセスできません";
+      writeAccessLog(GAS_URL, SHARE_API_SECRET, {
+        ...verifiedIdentity,
+        actionName: "認証失敗",
+        detail: `token=${token} / ${failMessage}`
+      });
+
+      // 案件データ取得の結果は、認証失敗の場合は一切使わず捨てる
+      return res.status(403).json({ error: failMessage });
     }
 
     // -------------------------------------------------------------
-    // ④本人確認がすべて成功したので、並行して取得しておいた案件データを返す
+    // ④本人確認がすべて成功したので、並行して取得しておいた案件データを扱う
     // -------------------------------------------------------------
     const gasRes = await gasPromise;
     const responseText = await gasRes.text();
 
+    let data;
     try {
-      const data = JSON.parse(responseText);
-      // ホワイトリストに登録された正式なユーザー名。LINE経由の場合、
-      // LINEプロフィールAPIは相手が公式アカウントを友だち追加していないと
-      // 表示名を取得できない制約があるため、操作ログ記録時はこちらを優先して使う。
-      data.verifiedUserName = authData.data && authData.data.userName ? authData.data.userName : "";
-      // サーバーが検証して確定した識別子（操作ログ記録用。ブラウザの申告値ではない）
-      data.verifiedEmail = verifiedEmail;
-      data.verifiedLineUserId = verifiedLineUserId;
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      return res.status(200).json(data);
+      data = JSON.parse(responseText);
     } catch (parseError) {
       return res.status(500).json({
         error: "GASからの応答がJSONではありません。GASのアクセス権限が『全員』になっているか確認してください。",
         rawResponse: responseText.substring(0, 150)
       });
     }
+
+    // 案件共有GASがエラーを返した場合（HTTPステータスは200で返ってくる）
+    if (data.error) {
+      if (data.code === "NOT_FOUND") {
+        // 共有トークンに対応する案件が無い。本人確認は済んでいるため、
+        // 「誰が存在しない案件を開こうとしたか」を記録する。
+        writeAccessLog(GAS_URL, SHARE_API_SECRET, {
+          ...verifiedIdentity,
+          verifiedUserName: authData.data && authData.data.userName ? authData.data.userName : "",
+          actionName: "案件未発見",
+          detail: `token=${token}`
+        });
+        return res.status(404).json({ error: data.error });
+      }
+
+      // それ以外（シート未検出・設定ミス等）はシステム側の問題。
+      // 詳細はVercelのログにだけ残し、画面には一般的な文言を返す。
+      console.error("❌ 案件共有GASがエラーを返しました:", data.error);
+      return res.status(500).json({ error: "案件情報の取得に失敗しました。時間をおいて再度お試しください。" });
+    }
+
+    // 案件ページ開封を記録する。ユーザー名は、ホワイトリストに登録された
+    // 正式な名前を使う（LINEプロフィールAPIは友だち未追加だと名前を取得できないため）。
+    writeAccessLog(GAS_URL, SHARE_API_SECRET, {
+      ...verifiedIdentity,
+      verifiedUserName: authData.data && authData.data.userName ? authData.data.userName : "",
+      actionName: "案件ページ開封",
+      caseNo: data.caseNo || ""
+    });
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    return res.status(200).json(data);
 
   } catch (error) {
     // IDトークン検証のエラー（401/502）は、ステータス付きでそのまま返す
