@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- 環境依存パラメータ（config.js）はメイン処理より前に読み込む -->
 <script src="config.js"></script>
+<!-- 共通スタイル（index.html・share.html で共有）。ページ固有の指定は、下のstyleタグに書く -->
+<link rel="stylesheet" href="common.css">
 
 <!-- 【SDKの読み込み】
      LINE内蔵ブラウザかどうかをUser-Agentで先に簡易判定し、まず使う可能性が高い
@@ -51,25 +53,10 @@
 
 <title>案件共有</title>
 <style>
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    padding: 15px;
-    font-size: 14px;
-    color: #333;
-    background: #f4f4f4;
-    margin: 0;
-  }
-
+  /* body・.card（共通部分）・.btn・.line-btn・#stateBox は common.css に置いている */
   .card {
-    border: 1px solid #ddd;
-    border-radius: 10px;
     padding: 15px;
-    background: #fff;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     margin-bottom: 20px;
-    max-width: 480px;
-    margin-left: auto;
-    margin-right: auto;
   }
 
   h2 {
@@ -88,25 +75,6 @@
     display: inline-block;
     vertical-align: top;
   }
-
-  .btn {
-    display: block;
-    width: 100%;
-    max-width: 480px;
-    box-sizing: border-box;
-    text-align: center;
-    padding: 15px 0;
-    color: white;
-    text-decoration: none;
-    border-radius: 8px;
-    font-weight: bold;
-    font-size: 16px;
-    margin: 10px auto 0 auto;
-    border: none;
-    cursor: pointer;
-  }
-
-  .line-btn { background: #06c755; }
 
   .map-link {
     color: #1a73e8;
@@ -147,12 +115,6 @@
     font-weight: bold;
   }
 
-  #stateBox {
-    max-width: 480px;
-    margin: 40px auto;
-    text-align: center;
-    color: #666;
-  }
   .spinner {
     width: 32px; height: 32px; margin: 0 auto 12px auto;
     border: 3px solid #ddd; border-top-color: #06c755; border-radius: 50%;
