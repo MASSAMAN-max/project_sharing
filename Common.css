@@ -1,0 +1,59 @@
+/* =====================================================================
+ * 案件共有アプリ 共通スタイル（index.html・share.html の両方で読み込む）
+ * ---------------------------------------------------------------------
+ * 両ページで同じ見た目にする部品だけをここに置く。
+ *   ・body／.card（共通部分）／.btn／.line-btn／#stateBox
+ * ページごとに違う部分は、各HTMLの <style> に書く（読み込み順の関係で、
+ * 各HTMLの <style> の指定が、このファイルの指定より優先される）。
+ *   ・.card の余白・配置（index.html は案件詳細、share.html は中央寄せの選択画面）
+ *   ・h2、各ページ専用のボタン色・部品
+ * 【注意】ここを変更すると両ページの見た目が同時に変わる。
+ * ===================================================================== */
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  padding: 15px;
+  font-size: 14px;
+  color: #333;
+  background: #f4f4f4;
+  margin: 0;
+}
+
+/* カード（白い枠）。内側の余白・上下の配置は、各ページの <style> で指定する */
+.card {
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  max-width: 480px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ボタン共通（色は .line-btn 等で指定する） */
+.btn {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  box-sizing: border-box;
+  text-align: center;
+  padding: 15px 0;
+  color: white;
+  text-decoration: none;
+  border-radius: 8px;
+  font-weight: bold;
+  font-size: 16px;
+  margin: 10px auto 0 auto;
+  border: none;
+  cursor: pointer;
+}
+
+.line-btn { background: #06c755; }
+
+/* 読み込み中・エラー表示エリア */
+#stateBox {
+  max-width: 480px;
+  margin: 40px auto;
+  text-align: center;
+  color: #666;
+}
