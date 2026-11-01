@@ -6,21 +6,47 @@
 <!-- 環境依存パラメータ（config.js）はメイン処理より前に読み込む -->
 <script src="config.js"></script>
 
-<!-- 【速度改善】LINE内蔵ブラウザかどうかをUser-Agentで先に簡易判定し、
-     不要なSDKの読み込み自体をスキップする。
-     ・LINE内蔵ブラウザ → Googleログインはどのみち使わないため、
-       Google Identity ServicesのSDK読み込みを省略し、通信を1つ減らす。
-     ・それ以外（通常ブラウザ） → LIFF SDKの読み込みを省略する。
-     この判定はあくまで速度改善のための簡易判定であり、実際にどちらの
-     認証方式を使うかの最終判断は、この後 liff.isInClient() で
-     正式に行う（もしUser-Agentの判定がズレていても、initLiffAndLoadCase
-     内のフォールバック処理でGoogleログインに切り替わるため安全）。 -->
+<!-- 【SDKの読み込み】
+     LINE内蔵ブラウザかどうかをUser-Agentで先に簡易判定し、まず使う可能性が高い
+     方のSDKだけ、ページの先頭で読み込みを始める（不要な通信を1つ減らす速度改善）。
+       ・LINE内蔵ブラウザ → LIFF SDK
+       ・それ以外         → Google Identity ServicesのSDK
+     実際にどちらの認証方式を使うかの最終判断は、下部の認証処理で正式に行う。
+     User-Agentの判定が外れた場合（LINEなのにLIFFが使えない等）は、Googleログインが
+     必要になった時点で、loadSdk() によってその場でGoogleのSDKを読み込む。
+     （以前はdocument.writeで片方だけを読み込んでいたため、LINE判定のときは
+       GoogleのSDKが存在せず、フォールバックが動かなかった。）-->
 <script>
-  document.write(
-    /Line/i.test(navigator.userAgent)
-      ? '<script src="https://static.line-scdn.net/liff/edge/2/sdk.js" defer><\/script>'
-      : '<script src="https://accounts.google.com/gsi/client" async defer><\/script>'
-  );
+  const SDK_URLS = {
+    liff: "https://static.line-scdn.net/liff/edge/2/sdk.js",
+    google: "https://accounts.google.com/gsi/client"
+  };
+
+  // 読み込み中・読み込み済みのSDKを覚えておき、同じSDKを二重に読み込まない
+  const sdkPromises = {};
+
+  function loadSdk(name) {
+    if (!sdkPromises[name]) {
+      sdkPromises[name] = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = SDK_URLS[name];
+        script.async = true;
+        script.onload = resolve;
+        script.onerror = () => {
+          // 失敗した場合は覚えておかない（後で再度試せるようにする）
+          delete sdkPromises[name];
+          reject(new Error("SDKの読み込みに失敗しました: " + name));
+        };
+        document.head.appendChild(script);
+      });
+    }
+    return sdkPromises[name];
+  }
+
+  const isLineBrowser = /Line/i.test(navigator.userAgent);
+
+  // 先行読み込み。失敗しても、ここでは何もしない（実際に使う時点で再度試し、エラーを表示する）
+  loadSdk(isLineBrowser ? "liff" : "google").catch(() => {});
 </script>
 
 <title>案件共有</title>
@@ -280,6 +306,8 @@
       const check    = data.check || "--";
       const kBox     = data.kBox || "--";
       const area     = data.area || "--";
+      // 面積は、値があるときだけ単位（㎡）を付ける（未入力の「--」に「㎡」が付かないようにする）
+      const areaText = area === "--" ? "--" : `${area} ㎡`;
       const loc      = data.loc || "";
       const parking  = data.parking || "";
       const note     = data.note || "--";
@@ -324,7 +352,7 @@
           <p><span class="label">連絡先</span>: ${escapeHtml(tel)}</p>
           <p><span class="label">検査日</span>: ${escapeHtml(check)}</p>
           <p><span class="label">キーBOX</span>: ${escapeHtml(kBox)}</p>
-          <p><span class="label">面　積</span>: ${escapeHtml(area)} ㎡</p>
+          <p><span class="label">面　積</span>: ${escapeHtml(areaText)}</p>
           <p><span class="label">備　考</span>: ${escapeHtml(note)}</p>
           <hr>
 
@@ -424,68 +452,69 @@
     // 必ず liff.init() が完了した後に window.location から取得し直す
     // （init()より前に取得すると、リダイレクト前の古いURLを見てしまい
     //   トークンが取得できないことがある）。
+    //
+    // 戻り値：
+    //   true  … LIFFでの認証処理を引き受けた（以降は verifyAndLoadCase、またはエラー表示、
+    //           またはLINEログイン画面への遷移が進む）。呼び出し側は何もしなくてよい。
+    //   false … LIFFでは認証できない（SDKの読み込み失敗・初期化失敗・LINE内蔵
+    //           ブラウザではない等）。呼び出し側がGoogleログインに切り替える。
     // -------------------------------------------------------------
-    function initLiffAndLoadCase() {
+    async function tryLiffLogin() {
       // 【体感速度改善】LIFFの初期化はLINEサーバーとの通信を伴うため、
       // 数秒かかることがある。「何もない画面」の時間を減らすため、
-      // 最初に「LINEと連携しています…」という具体的なメッセージを出す
-      // （initはこの直後に始まるが、呼び出し前に一度描画を反映させたい
-      //   ため、先にshowStateしてからliff.init()を呼ぶ）。
+      // 先に「LINEと連携しています…」という具体的なメッセージを出す。
       showState("LINEと連携しています…", false);
 
-      liff.init({ liffId: CONFIG.LIFF_ID })
-        .then(() => {
-          const token = getQueryParam("token");
-          if (!token) {
-            showState("URLに共有トークン（?token=...）が指定されていません", true);
-            return;
-          }
+      try {
+        await loadSdk("liff");
+        await liff.init({ liffId: CONFIG.LIFF_ID });
 
-          if (!liff.isInClient()) {
-            // LINEアプリ内蔵ブラウザではない（LIFF URLを外部ブラウザで開いた等）
-            // → 通常のGoogleログインへフォールバックする
-            initGoogleLoginAndLoadCase(token);
-            return;
-          }
-          if (!liff.isLoggedIn()) {
-            // 通常はLINEアプリ内なので自動的にログイン済みのはずだが、
-            // 念のためログインしていなければLINEログイン画面へ誘導する
-            liff.login({ redirectUri: window.location.href });
-            return;
-          }
-          // サーバーに送るのはIDトークン（LINEが署名した本人確認情報）。
-          // 取得できない場合（LIFF側でopenidスコープが無効な場合等）は、
-          // 認証できないため案内を出して止める。
-          const idToken = liff.getIDToken();
-          if (!idToken) {
-            showState("LINEの認証情報を取得できませんでした。LINEを開き直して、もう一度お試しください。", true);
-            return;
-          }
-          showState("ログインを確認しています…", false);
-          verifyAndLoadCase(token, { lineIdToken: idToken });
-        })
-        .catch(err => {
-          console.error("❌ LIFF初期化に失敗しました:", err);
-          // LIFFが使えない場合もGoogleログインへフォールバックする
-          // （tokenはこの時点のURLから取得し直す）
-          const token = getQueryParam("token");
-          if (!token) {
-            showState("URLに共有トークン（?token=...）が指定されていません", true);
-            return;
-          }
-          initGoogleLoginAndLoadCase(token);
-        });
+        const token = getQueryParam("token");
+        if (!token) {
+          showState("URLに共有トークン（?token=...）が指定されていません", true);
+          return true;
+        }
+
+        if (!liff.isInClient()) {
+          // LINEアプリ内蔵ブラウザではない（LIFF URLを外部ブラウザで開いた等）
+          return false;
+        }
+        if (!liff.isLoggedIn()) {
+          // 通常はLINEアプリ内なので自動的にログイン済みのはずだが、
+          // 念のためログインしていなければLINEログイン画面へ誘導する
+          liff.login({ redirectUri: window.location.href });
+          return true;
+        }
+
+        // サーバーに送るのはIDトークン（LINEが署名した本人確認情報）。
+        // 取得できない場合（LIFF側でopenidスコープが無効な場合等）は、
+        // 認証できないため案内を出して止める。
+        const idToken = liff.getIDToken();
+        if (!idToken) {
+          showState("LINEの認証情報を取得できませんでした。LINEを開き直して、もう一度お試しください。", true);
+          return true;
+        }
+        showState("ログインを確認しています…", false);
+        verifyAndLoadCase(token, { lineIdToken: idToken });
+        return true;
+
+      } catch (err) {
+        console.error("❌ LIFFでの認証に失敗しました:", err);
+        return false;
+      }
     }
 
     // -------------------------------------------------------------
     // 【通常ブラウザでの認証（Google Identity Services）】
     // client_id は config.js の CONFIG.GOOGLE_CLIENT_ID を参照する。
+    // GoogleのSDKは、先行読み込みされていなければここで読み込む
+    // （LINEと判定されたがLIFFが使えなかった場合）。
     // -------------------------------------------------------------
-    function initGoogleLoginAndLoadCase(token) {
-      if (typeof google === "undefined") {
-        // 通常は発生しない想定（LINE内蔵ブラウザ判定が外れ、かつLIFFも
-        // 使えなかった場合のみ到達しうる）。SDK自体が読み込まれていない
-        // ため、ログイン手段を提供できない旨を表示する。
+    async function initGoogleLoginAndLoadCase(token) {
+      try {
+        await loadSdk("google");
+      } catch (err) {
+        console.error("❌ Google SDKの読み込みに失敗しました:", err);
         showState("ログイン機能の読み込みに失敗しました。ページを再読み込みしてください。", true);
         return;
       }
@@ -513,39 +542,24 @@
       google.accounts.id.prompt();
     }
 
-    (function init() {
+    (async function init() {
       // GAS接続はVercelの /api/data が担当する（ブラウザからGASは呼ばない）。
       // config.js は LIFF_ID・GOOGLE_CLIENT_ID を参照するために読み込んでいる。
 
-      // 【重要】tokenの取得は、ここ（ページ読み込み直後）ではなく
-      // initLiffAndLoadCase内、liff.init()完了後に行う。
-      // LIFF URL（https://liff.line.me/...）経由でアクセスされた場合、
-      // LINE側で実際のエンドポイントURLへリダイレクトする処理が入るため、
-      // ページ読み込み直後の時点ではクエリパラメータがまだ正しく
-      // 反映されていないことがある（liff.init()完了後であれば確実に
-      // 最終的なURLになっている）。
+      // LINE内蔵ブラウザと判定された場合は、まずLIFFでの認証を試みる。
+      // 【重要】この場合のtokenの取得は、tryLiffLogin内（liff.init()完了後）で行う。
+      if (isLineBrowser) {
+        const handledByLiff = await tryLiffLogin();
+        if (handledByLiff) return;
+        // LIFFで認証できなかった場合は、下のGoogleログインへ切り替える
+      }
 
-      window.onload = function () {
-        // 【重要】liff SDK自体が読み込まれているか（=User-Agent判定で
-        // LINE内蔵ブラウザと判定されたか）を確認してから分岐する。
-        // 読み込まれていなければ、そもそもliffオブジェクトが存在せず
-        // initLiffAndLoadCase内でエラーになるため、ここで直接
-        // Googleログインへ進む（tokenはこの時点のURLから取得する）。
-        if (typeof liff === "undefined") {
-          const token = getQueryParam("token");
-          if (!token) {
-            showState("URLに共有トークン（?token=...）が指定されていません", true);
-            return;
-          }
-          initGoogleLoginAndLoadCase(token);
-          return;
-        }
-
-        // 【重要】まずLIFFでの初期化を試みる。
-        // LINEアプリ内蔵ブラウザで開かれていればLINEuserIdでの自動認証、
-        // そうでなければ関数内でGoogleログインにフォールバックする。
-        initLiffAndLoadCase();
-      };
+      const token = getQueryParam("token");
+      if (!token) {
+        showState("URLに共有トークン（?token=...）が指定されていません", true);
+        return;
+      }
+      await initGoogleLoginAndLoadCase(token);
     })();
   </script>
 
