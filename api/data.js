@@ -50,6 +50,9 @@ export default async function handler(req, res) {
   const { token, email, lineUserId } = req.body || {};
   const GAS_URL = process.env.GAS_URL;
   const MAIN_APP_GAS_URL = process.env.MAIN_APP_GAS_URL;
+  // 両GASへの呼び出しに付ける共有シークレット（GAS側のスクリプトプロパティ
+  // 「SHARE_API_SECRET」と同じ値）。これが無いリクエストはGAS側で拒否される。
+  const SHARE_API_SECRET = process.env.SHARE_API_SECRET;
 
   if (!token) {
     return res.status(400).json({ error: "共有トークンが指定されていません" });
@@ -58,15 +61,18 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "ログインが必要です" });
   }
 
-  if (!GAS_URL || !MAIN_APP_GAS_URL) {
+  if (!GAS_URL || !MAIN_APP_GAS_URL || !SHARE_API_SECRET) {
     return res.status(500).json({
-      error: "サーバー設定エラー: Vercel環境変数『GAS_URL』または『MAIN_APP_GAS_URL』が読み込めていません。Redeployを実行してください。"
+      error: "サーバー設定エラー: Vercel環境変数『GAS_URL』『MAIN_APP_GAS_URL』『SHARE_API_SECRET』のいずれかが読み込めていません。Redeployを実行してください。"
     });
   }
 
   try {
     const authAction = email ? "verifyShareUser" : "verifyShareUserByLineId";
-    const authPayload = email ? { email: email } : { lineUserId: lineUserId };
+    // shareSecret：メインアプリGASが「案件共有アプリからの呼び出し」か確認するための値
+    const authPayload = email
+      ? { email: email, shareSecret: SHARE_API_SECRET }
+      : { lineUserId: lineUserId, shareSecret: SHARE_API_SECRET };
 
     // -------------------------------------------------------------
     // 【並列実行】認証チェック（メインアプリGAS）と、案件データ取得
@@ -86,7 +92,7 @@ export default async function handler(req, res) {
           payload: authPayload
         })
       }),
-      fetch(`${GAS_URL}?token=${encodeURIComponent(token)}`, {
+      fetch(`${GAS_URL}?token=${encodeURIComponent(token)}&secret=${encodeURIComponent(SHARE_API_SECRET)}`, {
         redirect: "follow"
       })
     ]);
