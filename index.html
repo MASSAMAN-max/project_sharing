@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- 環境依存パラメータ（config.js）はメイン処理より前に読み込む -->
 <script src="config.js"></script>
+
 <!-- 【速度改善】LINE内蔵ブラウザかどうかをUser-Agentで先に簡易判定し、
      不要なSDKの読み込み自体をスキップする。
      ・LINE内蔵ブラウザ → Googleログインはどのみち使わないため、
@@ -214,22 +215,6 @@
       }
     }
 
-    // -------------------------------------------------------------
-    // 【ログイン状態管理】
-    // currentUserEmail：サーバーがGoogleのIDトークンを検証して確定したメールアドレス。
-    // currentUserLineUserId：サーバーがLINEのIDトークンを検証して確定したLINEuserId。
-    //   LINEアプリ内蔵ブラウザで開いた場合はこちらが使われる。
-    // どちらか1つだけが値を持つ状態になる。
-    // いずれも操作ログの記録にだけ使う値で、認証には使わない（認証はIDトークンで行う）。
-    // 認証成功（案件データの取得成功）までは、どちらもnullのまま。
-    // -------------------------------------------------------------
-    let currentUserEmail = null;
-    let currentUserLineUserId = null;
-    // ホワイトリストに登録された正式なユーザー名（/api/data が認証成功時に返す）。
-    // 操作ログに「友だち未追加のLINEユーザーでも名前が空欄にならない」よう、
-    // ログ送信時に一緒に送る。
-    let currentVerifiedUserName = null;
-
     function showLoginScreen() {
       document.getElementById("stateBox").style.display = "none";
       document.getElementById("app").style.display = "none";
@@ -273,11 +258,10 @@
             detail = errBody.error || "";
           } catch (_) {}
 
-          throw new Error(
-            detail
-              ? detail
-              : `HTTPエラー: ${response.status}`
-          );
+          // statusを付けておく（呼び出し側で「ログインの問題」と「それ以外」を区別するため）
+          const httpError = new Error(detail ? detail : `HTTPエラー: ${response.status}`);
+          httpError.status = response.status;
+          throw httpError;
         }
 
         return await response.json();
@@ -289,55 +273,9 @@
           throw new Error("通信に時間がかかっています。電波の良い場所で、もう一度お試しください。");
         }
 
-        throw new Error(err.message || "データの取得に失敗しました（通信エラー）");
-      }
-    }
-
-    // 【操作ログ用】案件情報の保持。renderCase実行時にセットされ、
-    // logShareAppAction関数から「どの案件での操作か」を判定するために使う。
-    let currentCaseForLine = null; // { shareToken, caseNo }
-
-    // 現在ログイン済みの認証情報を返す。
-    // Googleログイン経由なら { email }、LINE内蔵ブラウザ（LIFF）経由なら
-    // { lineUserId } が入っている（どちらか1つだけが値を持つ想定）。
-    function getCurrentAuthInfo() {
-      const shareToken = currentCaseForLine ? currentCaseForLine.shareToken : null;
-      if (currentUserEmail) {
-        return { email: currentUserEmail, shareToken: shareToken };
-      }
-      return { lineUserId: currentUserLineUserId, shareToken: shareToken };
-    }
-
-    // -------------------------------------------------------------
-    // 【操作ログの記録】
-    // 「案件ページ開封」等の操作を、案件共有GAS側の操作ログシートに
-    // 記録する。認証情報（email/lineUserId）は分かる範囲でそのまま渡す。
-    //
-    // 【重要】このログ送信は失敗してもユーザー体験に一切影響させない。
-    // ログ記録はあくまで補助的な機能であり、これが失敗したことを理由に
-    // 案件詳細の表示を止めたり、エラー表示を出したりしてはならない。
-    // そのため await はするがcatchで握りつぶし、コンソールにのみ出力する。
-    // -------------------------------------------------------------
-    async function logShareAppAction(actionName, detail) {
-      try {
-        const authInfo = getCurrentAuthInfo();
-        const caseNo = currentCaseForLine ? currentCaseForLine.caseNo : "";
-
-        await fetch("/api/log-action", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            lineUserId: authInfo.lineUserId || "",
-            email: authInfo.email || "",
-            verifiedUserName: currentVerifiedUserName || "",
-            actionName: actionName,
-            caseNo: caseNo || "",
-            detail: detail || ""
-          })
-        });
-      } catch (err) {
-        // ログ記録の失敗はコンソールに残すのみ。ユーザーには一切表示しない。
-        console.error("❌ 操作ログの記録に失敗しました:", err);
+        const wrappedError = new Error(err.message || "データの取得に失敗しました（通信エラー）");
+        wrappedError.status = err.status;
+        throw wrappedError;
       }
     }
 
@@ -379,14 +317,6 @@
       });
       if (!workHtml) workHtml = "<div>予定なし</div>";
 
-      // 【操作ログ用】案件情報の保持。currentCaseForLineはlogShareAppAction
-      // から「どの案件での操作か」を判定するために使う（共有機能は
-      // share.html側に移ったため、ここではログ用の保持のみ）。
-      currentCaseForLine = {
-        shareToken: data.token,
-        caseNo: data.caseNo || ""
-      };
-
       // 【共有機能について】案件詳細ページ（index.html）には共有ボタンを
       // 置かない方針に変更した。共有の入口は「メインアプリの共有ボタン」
       // 「カレンダーの共有リンク」の2つに絞り、いずれも新設の
@@ -422,31 +352,10 @@
       app.style.display = "block";
       document.getElementById("stateBox").style.display = "none";
       document.title = title;
-
-      // 【操作ログ】案件詳細の表示が完了した時点で「案件ページ開封」を記録する
-      logShareAppAction("案件ページ開封");
-    }
-
-    // -------------------------------------------------------------
-    // 【Googleログイン処理】
-    // Sign In With Google のコールバックとして呼ばれる。
-    // 取得したIDトークン（JWT）をデコードしてメールアドレスだけを取り出す。
-    // ※ ここではJWTの署名検証はしない（ブラウザ側では検証できないため）。
-    //   実際の検証は、IDトークンそのものをサーバー（/api/data）へ送り、
-    //   サーバーがGoogleに確認する形で行う。
-    //   ブラウザ側のデコードは、認証失敗ログに残す「申告されたメールアドレス」を
-    //   取り出すだけの役割で、認証の判断には使わない。
-    // -------------------------------------------------------------
-    function decodeJwtPayload(jwt) {
-      const base64Url = jwt.split(".")[1];
-      const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-      const jsonStr = decodeURIComponent(
-        atob(base64).split("").map(c => "%" + c.charCodeAt(0).toString(16).padStart(2, "0")).join("")
-      );
-      return JSON.parse(jsonStr);
     }
 
     // 認証エラー専用の表示（showStateと違い「ログインし直す」ボタンを併せて出す）。
+    // ログイン情報が無効（401）・アクセス権が無い（403）場合にだけ使う。
     // LINE経由の場合は「別のアカウントでログインし直す」という概念が無い
     // （LINEアプリにログインしている本人のIDがそのまま使われるだけのため）
     // ので、Googleログインのときだけボタンを出す。
@@ -485,46 +394,28 @@
     // /api/data 側で「IDトークンの検証 → ホワイトリスト照合」を行うため、
     // 実質的には「認証チェック＋データ取得」を1回のAPI呼び出しにまとめている。
     //
-    //   authInfo         … サーバーに送る認証情報（{ googleIdToken } または { lineIdToken }）
-    //   claimedIdentity  … ブラウザ側で読み取った「申告値」（{ email } または { lineUserId }）。
-    //                      認証失敗ログに「誰が失敗したか」を残すためだけに使う。
-    //                      未検証の値なので、認証の判断には一切使わない。
-    function verifyAndLoadCase(token, authInfo, claimedIdentity) {
-      const claimed = claimedIdentity || {};
+    //   authInfo … サーバーに送る認証情報（{ googleIdToken } または { lineIdToken }）
+    //
+    // 【操作ログについて】「案件ページ開封」「認証失敗」等の操作ログは、
+    // /api/data がサーバー側で記録する（ブラウザからは送らない。
+    // ブラウザが送る内容は偽装できてしまうため）。
+    function verifyAndLoadCase(token, authInfo) {
       showState("案件情報を読み込んでいます…", false);
 
       fetchCaseData(token, authInfo)
-        .then(data => {
-          // 操作ログ用の識別子は、サーバーが検証して確定した値を使う
-          currentUserEmail = data.verifiedEmail || null;
-          currentUserLineUserId = data.verifiedLineUserId || null;
-          // 【重要】renderCase内で「案件ページ開封」ログが送られるため、
-          // 必ずrenderCaseより前に正式名をセットしておくこと。
-          currentVerifiedUserName = data.verifiedUserName || null;
-          renderCase(data);
-        })
+        .then(renderCase)
         .catch(err => {
-          // 【重要】/api/data は認証エラー時にHTTP 403を返すため、
-          // fetchCaseData内でエラーがthrowされ、このcatchに到達する
-          // （以前は.then内でdata.errorを見る想定だったが、実際には
-          //   到達しない経路だったため、ここに認証失敗ログを移した）。
-          //
-          // 【操作ログ】認証失敗を記録する。まだ案件情報（caseNo）を
-          // 取得できていない段階のため、token（共有トークン）を
-          // detailに含めることで、後から案件を特定できるようにする。
-          // ログ送信自体の失敗はユーザーに影響させないため、awaitはしない。
-          fetch("/api/log-action", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              lineUserId: claimed.lineUserId || "",
-              email: claimed.email || "",
-              actionName: "認証失敗",
-              detail: `token=${token} / ${err.message}`
-            })
-          }).catch(logErr => console.error("❌ 操作ログの記録に失敗しました:", logErr));
+          const message = err.message || "データの取得に失敗しました";
 
-          showAuthErrorState(err.message || "データの取得に失敗しました", authInfo);
+          // ログイン情報が無効(401)・アクセス権が無い(403)ときだけ、
+          // 「ログインし直す」ボタン付きの表示にする。
+          // 案件が見つからない(404)・通信エラー等は、ログインし直しても
+          // 解決しないため、ボタン無しで理由だけを表示する。
+          if (err.status === 401 || err.status === 403) {
+            showAuthErrorState(message, authInfo);
+          } else {
+            showState(message, true);
+          }
         });
     }
 
@@ -578,15 +469,8 @@
             showState("LINEの認証情報を取得できませんでした。LINEを開き直して、もう一度お試しください。", true);
             return;
           }
-          // 認証失敗ログ用の申告値。IDトークンの中身をブラウザ側で読むだけで、
-          // 通信は発生しない（以前のliff.getProfile()より速い）。認証の判断には使わない。
-          const decodedIdToken = liff.getDecodedIDToken();
           showState("ログインを確認しています…", false);
-          verifyAndLoadCase(
-            token,
-            { lineIdToken: idToken },
-            { lineUserId: decodedIdToken && decodedIdToken.sub ? decodedIdToken.sub : "" }
-          );
+          verifyAndLoadCase(token, { lineIdToken: idToken });
         })
         .catch(err => {
           console.error("❌ LIFF初期化に失敗しました:", err);
@@ -618,14 +502,8 @@
         client_id: CONFIG.GOOGLE_CLIENT_ID,
         callback: (credentialResponse) => {
           // サーバーに送るのはIDトークン（Googleが署名した本人確認情報）。
-          // payload.email は認証失敗ログ用の申告値にだけ使う（認証の判断には使わない）。
-          const payload = decodeJwtPayload(credentialResponse.credential);
           showState("ログインを確認しています…", false);
-          verifyAndLoadCase(
-            token,
-            { googleIdToken: credentialResponse.credential },
-            { email: payload.email }
-          );
+          verifyAndLoadCase(token, { googleIdToken: credentialResponse.credential });
         }
       });
 
