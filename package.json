@@ -1,5 +1,8 @@
 {
   "name": "case-share-app",
   "version": "1.0.0",
-  "private": true
+  "private": true,
+  "dependencies": {
+    "@vercel/functions": "^2.1.0"
+  }
 }
