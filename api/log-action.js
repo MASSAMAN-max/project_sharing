@@ -22,14 +22,16 @@ export default async function handler(req, res) {
 
   const { lineUserId, email, verifiedUserName, actionName, caseNo, detail } = req.body || {};
   const GAS_URL = process.env.GAS_URL;
+  // 案件共有GASが「Vercel経由の書き込み」か確認するための共有シークレット
+  const SHARE_API_SECRET = process.env.SHARE_API_SECRET;
 
   if (!actionName) {
     return res.status(400).json({ error: "操作名（actionName）が指定されていません" });
   }
 
-  if (!GAS_URL) {
+  if (!GAS_URL || !SHARE_API_SECRET) {
     return res.status(500).json({
-      error: "サーバー設定エラー: Vercel環境変数『GAS_URL』が読み込めていません。Redeployを実行してください。"
+      error: "サーバー設定エラー: Vercel環境変数『GAS_URL』または『SHARE_API_SECRET』が読み込めていません。Redeployを実行してください。"
     });
   }
 
@@ -39,6 +41,7 @@ export default async function handler(req, res) {
       headers: { "Content-Type": "text/plain" },
       body: JSON.stringify({
         action: "logAction",
+        secret: SHARE_API_SECRET,
         lineUserId: lineUserId || "",
         email: email || "",
         verifiedUserName: verifiedUserName || "",
