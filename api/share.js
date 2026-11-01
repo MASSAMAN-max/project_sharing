@@ -35,7 +35,9 @@ export default async function handler(req, res) {
 
   // 【2】SNSボット（LINE等）：GASからOGPを取得
   const GAS_URL = process.env.GAS_URL;
-  if (!GAS_URL) {
+  // 案件共有GASが「Vercel経由の呼び出し」か確認するための共有シークレット
+  const SHARE_API_SECRET = process.env.SHARE_API_SECRET;
+  if (!GAS_URL || !SHARE_API_SECRET) {
     return res.status(400).send("パラメーターエラー");
   }
 
@@ -48,6 +50,7 @@ export default async function handler(req, res) {
     // 軽量な要約API（タイトル・発注元・担当者・住所のみ）を使う。
     // 指定しないと案件詳細（連絡先等を含む buildCaseData）が呼ばれてしまう。
     gasApiUrl.searchParams.set('action', 'summary');
+    gasApiUrl.searchParams.set('secret', SHARE_API_SECRET);
 
     const gasRes = await fetch(gasApiUrl.toString());
     if (gasRes.ok) {
