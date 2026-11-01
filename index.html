@@ -217,11 +217,12 @@
 
     // -------------------------------------------------------------
     // 【ログイン状態管理】
-    // currentUserEmail：Googleログインで確認できたメールアドレス。
-    //   これが確定するまでは案件データの取得（fetchCaseData）を行わない。
-    // currentUserLineUserId：LIFF経由で確認できたLINEuserId。
+    // currentUserEmail：サーバーがGoogleのIDトークンを検証して確定したメールアドレス。
+    // currentUserLineUserId：サーバーがLINEのIDトークンを検証して確定したLINEuserId。
     //   LINEアプリ内蔵ブラウザで開いた場合はこちらが使われる。
     // どちらか1つだけが値を持つ状態になる。
+    // いずれも操作ログの記録にだけ使う値で、認証には使わない（認証はIDトークンで行う）。
+    // 認証成功（案件データの取得成功）までは、どちらもnullのまま。
     // -------------------------------------------------------------
     let currentUserEmail = null;
     let currentUserLineUserId = null;
@@ -240,9 +241,11 @@
     // ブラウザからGASを直接fetchせず、同一オリジンのVercel API
     // (/api/data) を経由してサーバー側からGASへ接続する。
     // 【ログイン機能追加に伴いGET→POSTへ変更】
-    // 認証に使う情報（email または lineUserId）をURL（クエリパラメータ）に
+    // 認証に使う情報（IDトークン）をURL（クエリパラメータ）に
     // 乗せたくないため、リクエストボディに入れて送る。
-    // authInfo は { email: "..." } または { lineUserId: "..." } のどちらか一方。
+    // authInfo は { googleIdToken: "..." } または { lineIdToken: "..." } のどちらか一方。
+    // IDトークンはGoogle/LINEが署名した本人確認情報で、サーバー（/api/data）が
+    // 検証する。メールアドレスやLINEuserIdの申告値は、認証には使われない。
     async function fetchCaseData(token, authInfo) {
       const url = `/api/data`;
       const controller = new AbortController();
@@ -430,9 +433,10 @@
     // Sign In With Google のコールバックとして呼ばれる。
     // 取得したIDトークン（JWT）をデコードしてメールアドレスだけを取り出す。
     // ※ ここではJWTの署名検証はしない（ブラウザ側では検証できないため）。
-    //   実際の正当性確認は、このメールアドレスをサーバー（GAS）へ送り、
-    //   ホワイトリストと照合する verifyShareUser の呼び出し側で行う。
-    //   ブラウザ側のデコードは「表示用のメールアドレスを取り出すだけ」の役割。
+    //   実際の検証は、IDトークンそのものをサーバー（/api/data）へ送り、
+    //   サーバーがGoogleに確認する形で行う。
+    //   ブラウザ側のデコードは、認証失敗ログに残す「申告されたメールアドレス」を
+    //   取り出すだけの役割で、認証の判断には使わない。
     // -------------------------------------------------------------
     function decodeJwtPayload(jwt) {
       const base64Url = jwt.split(".")[1];
@@ -453,7 +457,7 @@
       document.getElementById("loginBox").style.display = "none";
       document.getElementById("app").style.display = "none";
 
-      const isGoogleAuth = authInfo && authInfo.email;
+      const isGoogleAuth = authInfo && authInfo.googleIdToken;
       const retryButtonHtml = isGoogleAuth
         ? `<button id="retryLoginBtn" class="btn line-btn">別のアカウントでログインし直す</button>`
         : "";
@@ -478,21 +482,23 @@
       google.accounts.id.prompt();
     }
 
-    // 認証情報（emailまたはlineUserId）をサーバーに送って確認しつつ、
-    // 成功すれば案件データを取得する。
-    // /api/data 側で verifyShareUser（またはverifyShareUserByLineId）による
-    // 認証チェックも行うため、実質的には「認証チェック＋データ取得」を
-    // 1回のAPI呼び出しにまとめている。
-    function verifyAndLoadCase(token, authInfo) {
+    // IDトークンをサーバーに送って本人確認しつつ、成功すれば案件データを取得する。
+    // /api/data 側で「IDトークンの検証 → ホワイトリスト照合」を行うため、
+    // 実質的には「認証チェック＋データ取得」を1回のAPI呼び出しにまとめている。
+    //
+    //   authInfo         … サーバーに送る認証情報（{ googleIdToken } または { lineIdToken }）
+    //   claimedIdentity  … ブラウザ側で読み取った「申告値」（{ email } または { lineUserId }）。
+    //                      認証失敗ログに「誰が失敗したか」を残すためだけに使う。
+    //                      未検証の値なので、認証の判断には一切使わない。
+    function verifyAndLoadCase(token, authInfo, claimedIdentity) {
+      const claimed = claimedIdentity || {};
       showState("案件情報を読み込んでいます…", false);
 
       fetchCaseData(token, authInfo)
         .then(data => {
-          if (authInfo.email) {
-            currentUserEmail = authInfo.email;
-          } else if (authInfo.lineUserId) {
-            currentUserLineUserId = authInfo.lineUserId;
-          }
+          // 操作ログ用の識別子は、サーバーが検証して確定した値を使う
+          currentUserEmail = data.verifiedEmail || null;
+          currentUserLineUserId = data.verifiedLineUserId || null;
           // 【重要】renderCase内で「案件ページ開封」ログが送られるため、
           // 必ずrenderCaseより前に正式名をセットしておくこと。
           currentVerifiedUserName = data.verifiedUserName || null;
@@ -512,8 +518,8 @@
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              lineUserId: authInfo.lineUserId || "",
-              email: authInfo.email || "",
+              lineUserId: claimed.lineUserId || "",
+              email: claimed.email || "",
               actionName: "認証失敗",
               detail: `token=${token} / ${err.message}`
             })
@@ -526,8 +532,9 @@
     // -------------------------------------------------------------
     // 【LINEアプリ内蔵ブラウザでの認証（LIFF）】
     // liff.init() 後、liff.isInClient() でLINEアプリ内蔵ブラウザかどうかを
-    // 判定する。内蔵ブラウザであれば liff.getProfile() でその場でLINEに
-    // ログイン済みの本人のLINEuserIdを取得できる（追加のログイン操作は不要）。
+    // 判定する。内蔵ブラウザであれば liff.getIDToken() でその場でLINEに
+    // ログイン済みの本人のIDトークンを取得できる（追加のログイン操作は不要）。
+    // サーバーはこのIDトークンをLINEに問い合わせて検証し、本人のLINEuserIdを確定する。
     //
     // 【tokenの取得タイミングについて】
     // LIFF URL（https://liff.line.me/...）経由でアクセスされた場合、
@@ -564,10 +571,23 @@
             liff.login({ redirectUri: window.location.href });
             return;
           }
-          return liff.getProfile().then(profile => {
-            showState("ログインを確認しています…", false);
-            verifyAndLoadCase(token, { lineUserId: profile.userId });
-          });
+          // サーバーに送るのはIDトークン（LINEが署名した本人確認情報）。
+          // 取得できない場合（LIFF側でopenidスコープが無効な場合等）は、
+          // 認証できないため案内を出して止める。
+          const idToken = liff.getIDToken();
+          if (!idToken) {
+            showState("LINEの認証情報を取得できませんでした。LINEを開き直して、もう一度お試しください。", true);
+            return;
+          }
+          // 認証失敗ログ用の申告値。IDトークンの中身をブラウザ側で読むだけで、
+          // 通信は発生しない（以前のliff.getProfile()より速い）。認証の判断には使わない。
+          const decodedIdToken = liff.getDecodedIDToken();
+          showState("ログインを確認しています…", false);
+          verifyAndLoadCase(
+            token,
+            { lineIdToken: idToken },
+            { lineUserId: decodedIdToken && decodedIdToken.sub ? decodedIdToken.sub : "" }
+          );
         })
         .catch(err => {
           console.error("❌ LIFF初期化に失敗しました:", err);
@@ -598,9 +618,15 @@
       google.accounts.id.initialize({
         client_id: CONFIG.GOOGLE_CLIENT_ID,
         callback: (credentialResponse) => {
+          // サーバーに送るのはIDトークン（Googleが署名した本人確認情報）。
+          // payload.email は認証失敗ログ用の申告値にだけ使う（認証の判断には使わない）。
           const payload = decodeJwtPayload(credentialResponse.credential);
           showState("ログインを確認しています…", false);
-          verifyAndLoadCase(token, { email: payload.email });
+          verifyAndLoadCase(
+            token,
+            { googleIdToken: credentialResponse.credential },
+            { email: payload.email }
+          );
         }
       });
 
