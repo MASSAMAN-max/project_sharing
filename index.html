@@ -81,8 +81,6 @@
   }
 
   .line-btn { background: #06c755; }
-  .fb-btn { background: #0084ff; }
-  .copy-btn { background: #666; }
 
   .map-link {
     color: #1a73e8;
@@ -100,12 +98,6 @@
   .section-title {
     font-weight: bold;
     margin-bottom: 8px;
-  }
-
-  .small {
-    font-size: 12px;
-    color: #666;
-    word-break: break-all;
   }
 
   .work-item {
@@ -522,9 +514,8 @@
     }
 
     (function init() {
-      // GAS_URLはブラウザ側では使用しない。
-      // GAS接続はVercelの /api/data が担当する。
-      // config.jsは既存構成との互換性のため読み込み可能なままにしている。
+      // GAS接続はVercelの /api/data が担当する（ブラウザからGASは呼ばない）。
+      // config.js は LIFF_ID・GOOGLE_CLIENT_ID を参照するために読み込んでいる。
 
       // 【重要】tokenの取得は、ここ（ページ読み込み直後）ではなく
       // initLiffAndLoadCase内、liff.init()完了後に行う。
