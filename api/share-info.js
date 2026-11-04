@@ -30,7 +30,11 @@ export default async function handler(req, res) {
   }
 
   try {
-    const gasRes = await fetch(`${GAS_URL}?token=${encodeURIComponent(token)}&action=summary&secret=${encodeURIComponent(SHARE_API_SECRET)}`, {
+    // 共有シークレットは、URLではなくリクエスト本文（POST）で渡す（URLはアクセスログ等に残りやすいため）
+    const gasRes = await fetch(GAS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ action: "getCaseSummary", secret: SHARE_API_SECRET, token: String(token) }),
       redirect: "follow"
     });
 
