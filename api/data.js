@@ -195,10 +195,14 @@ export default async function handler(req, res) {
     // 取得結果が未処理のまま残ってエラー扱いにならないよう、
     // 何もしない catch を付けておく（後で await した時のエラーは通常どおり届く）。
     // -------------------------------------------------------------
-    const gasPromise = fetch(
-      `${GAS_URL}?token=${encodeURIComponent(token)}&secret=${encodeURIComponent(SHARE_API_SECRET)}`,
-      { redirect: "follow" }
-    );
+    // 共有シークレットは、URLではなくリクエスト本文（POST）で渡す
+    // （URLはアクセスログ等に残りやすいため）。応答の形式は従来と同じ。
+    const gasPromise = fetch(GAS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ action: "getCaseData", secret: SHARE_API_SECRET, token: String(token) }),
+      redirect: "follow"
+    });
     gasPromise.catch(() => {});
 
     // -------------------------------------------------------------
