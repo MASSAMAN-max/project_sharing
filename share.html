@@ -184,9 +184,22 @@
 
         const shareText = buildShareText(summary, liffUrl);
         const lineButton = document.getElementById("lineBtn");
-        lineButton.href = "https://line.me/R/share?text=" + encodeURIComponent(shareText);
-        lineButton.target = "_blank";
-        lineButton.rel = "noopener";
+        // LINEのWeb共有画面はスマートフォン向けで、PCでは宛先選択へ進まず
+        // LINE公式ページが表示される。そのためPCでは共有文をコピーし、
+        // LINEアプリのトークへ貼り付ける案内に切り替える。
+        const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+        if (isMobile) {
+          lineButton.href = "https://line.me/R/share?text=" + encodeURIComponent(shareText);
+          lineButton.target = "_blank";
+          lineButton.rel = "noopener";
+        } else {
+          lineButton.href = "#";
+          lineButton.addEventListener("click", (event) => {
+            event.preventDefault();
+            copyText(shareText);
+            alert("LINEで送る文章をコピーしました。LINEのトークに貼り付けて送信してください。");
+          });
+        }
         lineButton.textContent = "📩 LINEで送る";
         lineButton.classList.remove("is-disabled");
         lineButton.removeAttribute("aria-disabled");
