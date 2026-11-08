@@ -47,14 +47,17 @@ export default async function handler(req, res) {
   let clientStr = "";
 
   try {
-    const gasApiUrl = new URL(GAS_URL);
-    gasApiUrl.searchParams.set('token', token);
-    // 軽量な要約API（タイトル・発注元・担当者・住所のみ）を使う。
-    // 指定しないと案件詳細（連絡先等を含む buildCaseData）が呼ばれてしまう。
-    gasApiUrl.searchParams.set('action', 'summary');
-    gasApiUrl.searchParams.set('secret', SHARE_API_SECRET);
-
-    const gasRes = await fetch(gasApiUrl.toString());
+    // 軽量な要約API（タイトル・発注元・担当者・住所のみ）をPOSTで呼ぶ。
+    // 指定しないと案件詳細（連絡先等を含む）が呼ばれてしまうため、action は必ず getCaseSummary にする。
+    // シークレットはURLに載せない（URLはアクセスログ等に残りやすいため）。
+    // SNSのボットを長く待たせないよう、5秒で打ち切り、既定の見出しで返す。
+    const gasRes = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'getCaseSummary', secret: SHARE_API_SECRET, token: String(token) }),
+      redirect: 'follow',
+      signal: AbortSignal.timeout(5000)
+    });
     if (gasRes.ok) {
       const data = await gasRes.json();
       if (data && !data.error) {
