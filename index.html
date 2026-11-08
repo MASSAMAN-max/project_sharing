@@ -323,7 +323,7 @@
 
           <hr>
           
-          ${attached ? `<p><a href="${escapeHtml(attached)}" class="map-link" target="_blank" rel="noopener">📂 資料参照</a></p>` : ""}
+          ${/^https?:\/\//i.test(attached) ? `<p><a href="${escapeHtml(attached)}" class="map-link" target="_blank" rel="noopener">📂 資料参照</a></p>` : ""}
           ${mapUrl ? `<p><a href="${mapUrl}" class="map-link" target="_blank" rel="noopener">📍 Googleマップを開く</a></p>` : ""}
           ${parkingUrl ? `<p><a href="${parkingUrl}" class="map-link" target="_blank" rel="noopener">駐車場位置を確認 🅿</a></p>` : ""}
         </div>
