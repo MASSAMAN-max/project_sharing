@@ -82,13 +82,20 @@ export default async function handler(req, res) {
   // 【表示内容】SNSのプレビューは、1行目（太字）が og:title、2行目が og:description。
   //   1行目：📁 No.案件No 案件名   ← 案件Noが無ければ案件名のみ。案件名も無ければ「案件共有」
   //   2行目：発注元（担当者 様）     ← 発注元が無ければ「▶ 案件詳細を開く」
+  //
+  // 【Messengerへの対応】Messengerは、プレビューに og:description を表示しない場合がある
+  // （タイトルとURLのドメインだけが出る）。そのため、発注元・担当者もタイトルに含める。
+  // 2行目を改行（&#10;）で区切るが、改行が反映されない環境では、半角スペースで続けて表示される。
   const titleText = [caseNo ? `No.${caseNo}` : "", title].filter(Boolean).join(" ") || "案件共有";
   const displayTitle = `📁 ${titleText}`;
   const description = clientStr || "▶ 案件詳細を開く";
+  const ogTitleHtml = clientStr
+    ? `${escapeHtml(displayTitle)}&#10;${escapeHtml(clientStr)}`
+    : escapeHtml(displayTitle);
 
   const ogpHtml = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">` +
     `<meta property="og:type" content="website">` +
-    `<meta property="og:title" content="${escapeHtml(displayTitle)}">` +
+    `<meta property="og:title" content="${ogTitleHtml}">` +
     `<meta property="og:description" content="${escapeHtml(description)}">` +
     `<title>${escapeHtml(displayTitle)}</title></head><body></body></html>`;
 
