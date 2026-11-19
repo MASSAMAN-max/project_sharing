@@ -14,6 +14,11 @@ const BOT_USER_AGENTS = [
   'whatsapp'
 ];
 
+// 未入力を表す "--" と空文字は「値なし」として扱う（GAS側は未入力の項目を "--" で返す）
+function hasValue(v) {
+  return !!v && v !== "--";
+}
+
 export default async function handler(req, res) {
   const token = req.query ? req.query.token : '';
 
@@ -35,7 +40,7 @@ export default async function handler(req, res) {
     return res.status(302).end();
   }
 
-  // 【2】SNSボット（LINE等）：GASからOGPを取得
+  // 【2】SNSボット（LINE・Messenger等）：GASからOGPを取得
   const GAS_URL = process.env.GAS_URL;
   // 案件共有GASが「Vercel経由の呼び出し」か確認するための共有シークレット
   const SHARE_API_SECRET = process.env.SHARE_API_SECRET;
@@ -43,11 +48,12 @@ export default async function handler(req, res) {
     return res.status(400).send("パラメーターエラー");
   }
 
-  let title = "案件共有";
+  let caseNo = "";
+  let title = "";
   let clientStr = "";
 
   try {
-    // 軽量な要約API（タイトル・発注元・担当者・住所のみ）をPOSTで呼ぶ。
+    // 軽量な要約API（案件No・タイトル・発注元・担当者・住所のみ）をPOSTで呼ぶ。
     // 指定しないと案件詳細（連絡先等を含む）が呼ばれてしまうため、action は必ず getCaseSummary にする。
     // シークレットはURLに載せない（URLはアクセスログ等に残りやすいため）。
     // SNSのボットを長く待たせないよう、5秒で打ち切り、既定の見出しで返す。
@@ -61,19 +67,24 @@ export default async function handler(req, res) {
     if (gasRes.ok) {
       const data = await gasRes.json();
       if (data && !data.error) {
-        title = data.title || "案件共有";
-        const client = data.client || "";
-        const staff = data.staff || "";
-        clientStr = (staff && staff !== "--" && staff !== "") ? `${client}（${staff} 様）` : client;
+        // caseNo は、GAS側（Main.js buildShareSummary）が返す。未対応の古いGASでは空のまま（案件名のみ表示）
+        caseNo = hasValue(String(data.caseNo || "")) ? String(data.caseNo) : "";
+        title = data.title || "";
+        const client = hasValue(data.client) ? data.client : "";
+        const staff = hasValue(data.staff) ? data.staff : "";
+        clientStr = (client && staff) ? `${client}（${staff} 様）` : client;
       }
     }
   } catch (e) {
     console.error("GAS Fetch Error:", e);
   }
 
-  // LINE表示用の装飾処理
-  const displayTitle = clientStr ? `📁 ${clientStr}` : `📁 ${title}`;
-  const description = "▶ 案件詳細を開く";
+  // 【表示内容】SNSのプレビューは、1行目（太字）が og:title、2行目が og:description。
+  //   1行目：📁 No.案件No 案件名   ← 案件Noが無ければ案件名のみ。案件名も無ければ「案件共有」
+  //   2行目：発注元（担当者 様）     ← 発注元が無ければ「▶ 案件詳細を開く」
+  const titleText = [caseNo ? `No.${caseNo}` : "", title].filter(Boolean).join(" ") || "案件共有";
+  const displayTitle = `📁 ${titleText}`;
+  const description = clientStr || "▶ 案件詳細を開く";
 
   const ogpHtml = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">` +
     `<meta property="og:type" content="website">` +
