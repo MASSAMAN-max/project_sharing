@@ -12,12 +12,11 @@
      LINE内蔵ブラウザかどうかをUser-Agentで先に簡易判定し、まず使う可能性が高い
      方のSDKだけ、ページの先頭で読み込みを始める（不要な通信を1つ減らす速度改善）。
        ・LINE内蔵ブラウザ → LIFF SDK
+       ・Messenger等の内蔵ブラウザ → どちらも読み込まない（Googleログインが使えず、案内画面を出すため）
        ・それ以外         → Google Identity ServicesのSDK
      実際にどちらの認証方式を使うかの最終判断は、下部の認証処理で正式に行う。
      User-Agentの判定が外れた場合（LINEなのにLIFFが使えない等）は、Googleログインが
-     必要になった時点で、loadSdk() によってその場でGoogleのSDKを読み込む。
-     （以前はdocument.writeで片方だけを読み込んでいたため、LINE判定のときは
-       GoogleのSDKが存在せず、フォールバックが動かなかった。）-->
+     必要になった時点で、loadSdk() によってその場でGoogleのSDKを読み込む。 -->
 <script>
   const SDK_URLS = {
     liff: "https://static.line-scdn.net/liff/edge/2/sdk.js",
@@ -47,8 +46,19 @@
 
   const isLineBrowser = /Line/i.test(navigator.userAgent);
 
+  // 【Googleログインが使えない内蔵ブラウザの判定】
+  // Messenger / Facebook / Instagram のアプリ内ブラウザでは、Googleのログイン画面
+  // （ポップアップ）が正しく動かず、画面が真っ白になる。該当する場合は、
+  // Googleログインの代わりに「通常のブラウザで開く」案内画面を表示する。
+  // ※ LINEは別ルート（LIFF）で認証できるため、ここには含めない。
+  const isInAppBrowser = !isLineBrowser && /FBAN|FBAV|FB_IAB|FBIOS|Messenger|Instagram/i.test(navigator.userAgent);
+
   // 先行読み込み。失敗しても、ここでは何もしない（実際に使う時点で再度試し、エラーを表示する）
-  loadSdk(isLineBrowser ? "liff" : "google").catch(() => {});
+  if (isLineBrowser) {
+    loadSdk("liff").catch(() => {});
+  } else if (!isInAppBrowser) {
+    loadSdk("google").catch(() => {});
+  }
 </script>
 
 <title>案件共有</title>
@@ -137,6 +147,39 @@
     display: flex;
     justify-content: center;
   }
+
+  /* Messenger等の内蔵ブラウザ向け案内画面 */
+  #inAppGuide {
+    max-width: 480px;
+    margin: 40px auto;
+    text-align: center;
+  }
+  #inAppGuide .guide-title {
+    font-weight: bold;
+    font-size: 16px;
+    color: #333;
+    margin-bottom: 10px;
+  }
+  #inAppGuide .guide-desc {
+    color: #666;
+    font-size: 13px;
+    line-height: 1.7;
+    text-align: left;
+    margin-bottom: 8px;
+  }
+  #inAppGuide .guide-steps {
+    text-align: left;
+    color: #444;
+    font-size: 13px;
+    line-height: 1.8;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 10px 14px 10px 30px;
+    margin: 12px 0 4px 0;
+  }
+  #inAppGuide .chrome-btn { background: #1a73e8; }
+  #inAppGuide .copy-btn { background: #666; }
 </style>
 </head>
 <body>
@@ -152,6 +195,9 @@
     <div id="googleSignInButton"></div>
   </div>
 
+  <!-- Messenger等の内蔵ブラウザで開かれた場合に表示する案内画面（中身は showInAppBrowserGuide が作る） -->
+  <div id="inAppGuide" style="display:none;"></div>
+
   <div id="app" style="display:none;"></div>
 
   <script>
@@ -161,6 +207,34 @@
 
     function escapeHtml(str) {
       return String(str == null ? "" : str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // 文字列をクリップボードへコピーする。
+    // 通常は navigator.clipboard を使い、使えない環境では従来の execCommand 方式に切り替える。
+    // 戻り値：コピーできたら true
+    async function copyToClipboard(text) {
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (_) {
+        // 失敗した場合は、下の方式で再度試す
+      }
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "absolute";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, 99999);
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        return ok;
+      } catch (_) {
+        return false;
+      }
     }
 
     // 【体感速度改善】読み込みが長引いた場合に、後から補足メッセージを
@@ -178,6 +252,7 @@
       const box = document.getElementById("stateBox");
       box.style.display = "block";
       document.getElementById("loginBox").style.display = "none";
+      document.getElementById("inAppGuide").style.display = "none";
       document.getElementById("app").style.display = "none";
       box.innerHTML = isError
         ? `<div style="color:#d33; font-weight:bold;">⚠️ ${escapeHtml(message)}</div>`
@@ -197,8 +272,62 @@
 
     function showLoginScreen() {
       document.getElementById("stateBox").style.display = "none";
+      document.getElementById("inAppGuide").style.display = "none";
       document.getElementById("app").style.display = "none";
       document.getElementById("loginBox").style.display = "block";
+    }
+
+    // -------------------------------------------------------------
+    // 【Messenger等の内蔵ブラウザ向け案内画面】
+    // Googleログインが使えない内蔵ブラウザで開かれた場合に、
+    // 「通常のブラウザで開き直してください」と案内する。
+    //   ・Android：Chromeで開くボタン（intent方式）＋URLコピー
+    //   ・iPhone等：URLコピー＋手順の案内
+    // ※ Androidの「Chromeで開く」ボタンは、アプリ側の制限で動かない場合がある。
+    //    その場合に備えて、URLコピーと手順の案内を必ず併記している。
+    // -------------------------------------------------------------
+    function showInAppBrowserGuide() {
+      const isAndroid = /Android/i.test(navigator.userAgent);
+      const currentUrl = window.location.href;
+
+      // Chromeを直接起動するURL（Android専用）。起動できない場合は、同じURLを現在のブラウザで開く
+      const chromeIntentUrl = `intent://${window.location.host}${window.location.pathname}${window.location.search}` +
+        `#Intent;scheme=https;package=com.android.chrome;` +
+        `S.browser_fallback_url=${encodeURIComponent(currentUrl)};end`;
+
+      const chromeButtonHtml = isAndroid
+        ? `<a id="openChromeBtn" class="btn chrome-btn" href="${escapeHtml(chromeIntentUrl)}">Chromeで開く</a>`
+        : "";
+
+      const stepsHtml = isAndroid
+        ? `<li>下の「URLをコピー」を押す</li>
+           <li>Chromeアプリを開き、アドレスバーにURLを貼り付ける</li>`
+        : `<li>下の「URLをコピー」を押す</li>
+           <li>Safari（またはChrome）を開き、アドレスバーにURLを貼り付ける</li>`;
+
+      const guide = document.getElementById("inAppGuide");
+      guide.innerHTML = `
+        <div class="guide-title">通常のブラウザで開いてください</div>
+        <div class="guide-desc">
+          Messengerなどのアプリ内ブラウザでは、Googleログインが正しく動作しません。
+          ${isAndroid ? "「Chromeで開く」を押すか、" : ""}URLをコピーして通常のブラウザで開き直してください。
+        </div>
+        ${chromeButtonHtml}
+        <button id="copyUrlBtn" type="button" class="btn copy-btn">URLをコピー</button>
+        <ol class="guide-steps">${stepsHtml}</ol>
+      `;
+
+      document.getElementById("copyUrlBtn").addEventListener("click", async () => {
+        const ok = await copyToClipboard(currentUrl);
+        alert(ok
+          ? "URLをコピーしました。通常のブラウザのアドレスバーに貼り付けて開いてください。"
+          : "コピーできませんでした。アドレスバーのURLを長押ししてコピーしてください。");
+      });
+
+      document.getElementById("stateBox").style.display = "none";
+      document.getElementById("loginBox").style.display = "none";
+      document.getElementById("app").style.display = "none";
+      guide.style.display = "block";
     }
 
     // 【CORS対策】
@@ -521,6 +650,14 @@
         showState("URLに共有トークン（?token=...）が指定されていません", true);
         return;
       }
+
+      // Messenger等の内蔵ブラウザでは、Googleログインが動かないため、
+      // 通常のブラウザで開き直すよう案内して終了する
+      if (isInAppBrowser) {
+        showInAppBrowserGuide();
+        return;
+      }
+
       await initGoogleLoginAndLoadCase(token);
     })();
   </script>
