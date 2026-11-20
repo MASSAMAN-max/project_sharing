@@ -12,8 +12,8 @@
      LINE内蔵ブラウザかどうかをUser-Agentで先に簡易判定し、まず使う可能性が高い
      方のSDKだけ、ページの先頭で読み込みを始める（不要な通信を1つ減らす速度改善）。
        ・LINE内蔵ブラウザ → LIFF SDK
-       ・Messenger等の内蔵ブラウザ → どちらも読み込まない（Googleログインが使えず、案内画面を出すため）
-       ・それ以外         → Google Identity ServicesのSDK
+       ・Messenger等の内蔵ブラウザ・それ以外 → Google Identity ServicesのSDK
+         （内蔵ブラウザでは、ポップアップではなくリダイレクト方式でログインする。下の setupInAppGoogleLogin 参照）
      実際にどちらの認証方式を使うかの最終判断は、下部の認証処理で正式に行う。
      User-Agentの判定が外れた場合（LINEなのにLIFFが使えない等）は、Googleログインが
      必要になった時点で、loadSdk() によってその場でGoogleのSDKを読み込む。 -->
@@ -54,9 +54,10 @@
   const isInAppBrowser = !isLineBrowser && /FBAN|FBAV|FB_IAB|FBIOS|Messenger|Instagram/i.test(navigator.userAgent);
 
   // 先行読み込み。失敗しても、ここでは何もしない（実際に使う時点で再度試し、エラーを表示する）
+  // （Messenger等の内蔵ブラウザも、リダイレクト方式のGoogleログインを試すため、Google SDKを読み込む）
   if (isLineBrowser) {
     loadSdk("liff").catch(() => {});
-  } else if (!isInAppBrowser) {
+  } else {
     loadSdk("google").catch(() => {});
   }
 </script>
@@ -178,6 +179,17 @@
     padding: 10px 14px 10px 30px;
     margin: 12px 0 4px 0;
   }
+  /* 内蔵ブラウザ用のGoogleログイン欄（SDKが読み込めた場合だけ表示する） */
+  #inAppLoginSection {
+    margin-bottom: 18px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid #ddd;
+  }
+  #inAppGoogleButton {
+    display: flex;
+    justify-content: center;
+    margin-top: 12px;
+  }
   #inAppGuide .chrome-btn { background: #1a73e8; }
   #inAppGuide .copy-btn { background: #666; }
 </style>
@@ -286,7 +298,7 @@
     // ※ Androidの「Chromeで開く」ボタンは、アプリ側の制限で動かない場合がある。
     //    その場合に備えて、URLコピーと手順の案内を必ず併記している。
     // -------------------------------------------------------------
-    function showInAppBrowserGuide() {
+    function showInAppBrowserGuide(token) {
       const isAndroid = /Android/i.test(navigator.userAgent);
       const currentUrl = window.location.href;
 
@@ -307,9 +319,14 @@
 
       const guide = document.getElementById("inAppGuide");
       guide.innerHTML = `
-        <div class="guide-title">通常のブラウザで開いてください</div>
+        <div id="inAppLoginSection" style="display:none;">
+          <div class="guide-title">Googleでログイン</div>
+          <div class="guide-desc">このままログインできます。</div>
+          <div id="inAppGoogleButton"></div>
+        </div>
+        <div class="guide-title">ログインできない場合は、通常のブラウザで開いてください</div>
         <div class="guide-desc">
-          Messengerなどのアプリ内ブラウザでは、Googleログインが正しく動作しません。
+          Messengerなどのアプリ内ブラウザでは、Googleログインが動作しない場合があります。
           ${isAndroid ? "「Chromeで開く」を押すか、" : ""}URLをコピーして通常のブラウザで開き直してください。
         </div>
         ${chromeButtonHtml}
@@ -328,6 +345,40 @@
       document.getElementById("loginBox").style.display = "none";
       document.getElementById("app").style.display = "none";
       guide.style.display = "block";
+
+      // 案内画面の上に、リダイレクト方式のGoogleログインを追加する（SDKが読み込めた場合のみ）
+      setupInAppGoogleLogin(token);
+    }
+
+    // -------------------------------------------------------------
+    // 【内蔵ブラウザ用：リダイレクト方式のGoogleログイン】
+    // ポップアップが使えない内蔵ブラウザ向け。流れは次のとおり。
+    //   1. ボタンを押すと、同じ画面でGoogleのログインへ移動する
+    //   2. ログイン後、Googleが /api/google-callback へ本人確認情報（IDトークン）を送る
+    //   3. google-callback が、確認後に、この画面（?token=...）へ戻す
+    //      （IDトークンは、URLではなく sessionStorage に入れて渡す）
+    //   4. init() が sessionStorage のIDトークンを見つけ、通常と同じ /api/data で検証・表示する
+    // 共有トークンは、移動の間に失われないよう、押す前に localStorage へ保存しておく。
+    // 失敗しても、下の「通常のブラウザで開く」案内は、そのまま使える。
+    // -------------------------------------------------------------
+    async function setupInAppGoogleLogin(token) {
+      try {
+        await loadSdk("google");
+        try { localStorage.setItem("pendingShareToken", token); } catch (_) {}
+
+        google.accounts.id.initialize({
+          client_id: CONFIG.GOOGLE_CLIENT_ID,
+          ux_mode: "redirect",
+          login_uri: `${window.location.origin}/api/google-callback`
+        });
+        google.accounts.id.renderButton(
+          document.getElementById("inAppGoogleButton"),
+          { theme: "outline", size: "large", text: "signin_with", locale: "ja" }
+        );
+        document.getElementById("inAppLoginSection").style.display = "block";
+      } catch (err) {
+        console.error("❌ 内蔵ブラウザ用のGoogleログインを準備できませんでした:", err);
+      }
     }
 
     // 【CORS対策】
@@ -496,6 +547,12 @@
     // prompt() するだけだと、同じアカウントが再び自動選択されてしまい
     // 「別のアカウントを選ぶ」ことができない。
     function retryGoogleLogin() {
+      // 内蔵ブラウザ（リダイレクト方式）で来た場合は、ポップアップ用の初期化をしていないため、
+      // 再読み込みして、ログイン画面（案内画面）に戻す
+      if (!window.google || !google.accounts || !google.accounts.id || isInAppBrowser) {
+        window.location.reload();
+        return;
+      }
       google.accounts.id.disableAutoSelect();
       showLoginScreen();
       google.accounts.id.prompt();
@@ -654,7 +711,19 @@
       // Messenger等の内蔵ブラウザでは、Googleログインが動かないため、
       // 通常のブラウザで開き直すよう案内して終了する
       if (isInAppBrowser) {
-        showInAppBrowserGuide();
+        // リダイレクト方式のログインから戻ってきた場合：google-callback が sessionStorage に入れた
+        // IDトークンを取り出し（使い捨て）、通常と同じ検証・表示へ進む
+        let pendingIdToken = "";
+        try {
+          pendingIdToken = sessionStorage.getItem("pendingGoogleIdToken") || "";
+          sessionStorage.removeItem("pendingGoogleIdToken");
+        } catch (_) {}
+        if (pendingIdToken) {
+          verifyAndLoadCase(token, { googleIdToken: pendingIdToken });
+          return;
+        }
+
+        showInAppBrowserGuide(token);
         return;
       }
 
